@@ -1,0 +1,18 @@
+name = "hyderabad-job-radar"
+main = "src/worker.js"
+compatibility_date = "2026-11-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "job-radar-db"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+migrations_dir = "migrations"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+run_worker_first = true
+
+[triggers]
+# 13:30 UTC = 19:00 India Standard Time, every day.
+crons = ["30 13 * * *"]

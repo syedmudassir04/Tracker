@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101828">
+  <title>Hyderabad Job Radar</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <section id="login-view" class="login-page" hidden>
+    <div class="login-card">
+      <div class="logo">JR<span class="logo-dot">.</span></div>
+      <div class="eyebrow">PRIVATE WORKSPACE</div>
+      <h1>Hyderabad Job Radar</h1>
+      <p>Track openings. Check on time. Apply before the crowd arrives.</p>
+      <form id="login-form" class="stack">
+        <label for="login-password">Workspace password</label>
+        <input id="login-password" name="password" type="password" autocomplete="current-password" required placeholder="Enter your password">
+        <button class="btn btn-primary" type="submit">Sign in</button>
+      </form>
+      <p id="login-error" class="small error"></p>
+    </div>
+  </section>
+
+  <div id="app-view" class="layout" hidden>
+    <aside class="sidebar">
+      <div class="brand"><span class="logo">JR<span class="logo-dot">.</span></span><span>JOB RADAR</span></div>
+      <div class="region">HYDERABAD, INDIA</div>
+      <nav class="nav">
+        <button class="nav-item active" data-page="companies"><span>▦</span> Company tracker</button>
+        <button class="nav-item" data-page="applications"><span>◫</span> Applications</button>
+        <button class="nav-item" data-page="emails"><span>✉</span> Gmail leads</button>
+      </nav>
+      <div class="sidebar-bottom">
+        <span class="small">Daily Google sync: 7:00 PM IST</span>
+        <button id="logout-btn" class="text-button">Sign out</button>
+      </div>
+    </aside>
+    <div class="workspace">
+      <header class="topbar">
+        <div class="topbar-title"><span class="mobile-logo">JR<span class="logo-dot">.</span></span> Job search workspace</div>
+        <div class="top-actions">
+          <span id="clock" class="clock"></span>
+          <button id="sync-btn" class="btn btn-outline">↻ Sync Google now</button>
+        </div>
+      </header>
+      <div class="mobile-nav" aria-label="Sections">
+        <button data-page="companies" class="active">Companies</button>
+        <button data-page="applications">Applications</button>
+        <button data-page="emails">Gmail</button>
+      </div>
+      <main class="content">
+        <section class="headline">
+          <div>
+            <div class="eyebrow">OPPORTUNITY MONITOR</div>
+            <h1>Find the opening early.</h1>
+            <p class="muted">Each company has its own 60-minute check cycle. Click a status after reviewing its career pages.</p>
+          </div>
+        </section>
+        <section class="stats" aria-label="Overview">
+          <div class="stat"><div class="stat-label">Companies tracked</div><div id="stat-companies" class="stat-value">0</div></div>
+          <div class="stat"><div class="stat-label">Need checking now</div><div id="stat-due" class="stat-value red-text">0</div></div>
+          <div class="stat"><div class="stat-label">Checks today</div><div id="stat-checks" class="stat-value">0</div></div>
+          <div class="stat"><div class="stat-label">Applications logged</div><div id="stat-apps" class="stat-value">0</div></div>
+        </section>
+        <div id="sync-status" class="sync-status">Google connection status is loading.</div>
+
+        <section id="companies-page" class="page">
+          <div class="section-head">
+            <div><h2>Company tracker</h2><p class="muted">Red means due. Green means checked within the last hour.</p></div>
+            <button id="add-company-btn" class="btn btn-primary">+ Add company</button>
+          </div>
+          <div class="toolbar">
+            <input id="company-search" aria-label="Search companies" placeholder="Search companies..." type="search">
+            <select id="company-filter" aria-label="Filter companies">
+              <option value="all">All companies</option>
+              <option value="due">Didn't check</option>
+              <option value="waiting">Checked, waiting</option>
+            </select>
+          </div>
+          <div class="table-scroll">
+            <table class="data-table" aria-label="Tracked companies">
+              <thead><tr><th>Company</th><th>Careers</th><th>LinkedIn</th><th>Check status</th><th>Actions</th></tr></thead>
+              <tbody id="companies-body"></tbody>
+            </table>
+          </div>
+          <div id="companies-empty" class="empty" hidden>No companies yet. Add your first company to begin tracking.</div>
+        </section>
+
+        <section id="applications-page" class="page" hidden>
+          <div class="section-head">
+            <div><h2>Application tracker</h2><p class="muted">Log the jobs you find and update their progress.</p></div>
+            <button id="add-application-btn" class="btn btn-primary">+ Add application</button>
+          </div>
+          <div class="toolbar">
+            <input id="application-search" type="search" placeholder="Search jobs or companies..." aria-label="Search applications">
+            <select id="application-filter" aria-label="Application status filter">
+              <option value="all">All statuses</option>
+              <option value="Not Applied">Not Applied</option><option value="Applied">Applied</option>
+              <option value="Assessment">Assessment</option><option value="Interview">Interview</option>
+              <option value="Rejected">Rejected</option><option value="Offer">Offer</option>
+            </select>
+          </div>
+          <div class="table-scroll">
+            <table class="data-table" aria-label="Applications">
+              <thead><tr><th>Company / Role</th><th>Job posting</th><th>Applied</th><th>Status</th><th>Actions</th></tr></thead>
+              <tbody id="applications-body"></tbody>
+            </table>
+          </div>
+          <div id="applications-empty" class="empty" hidden>No applications logged yet.</div>
+        </section>
+
+        <section id="emails-page" class="page" hidden>
+          <div class="section-head"><div><h2>Gmail leads</h2><p class="muted">Relevant emails found by the last Google sync. Review before taking action.</p></div></div>
+          <div class="information">Gmail is scanned for job alerts, application confirmations, assessments and interviews. Email matches do not automatically change your application statuses.</div>
+          <div class="table-scroll">
+            <table class="data-table" aria-label="Gmail job leads">
+              <thead><tr><th>Email</th><th>Sender</th><th>Category</th><th>Received</th><th>Open</th></tr></thead>
+              <tbody id="emails-body"></tbody>
+            </table>
+          </div>
+          <div id="emails-empty" class="empty" hidden>No matching Gmail messages synced yet. Use “Sync Google now” after connecting the Google bridge.</div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <dialog id="form-dialog" class="modal">
+    <form id="record-form" method="dialog">
+      <div class="dialog-head"><h2 id="dialog-title">Add company</h2><button id="close-dialog" class="icon-button" type="button" aria-label="Close">✕</button></div>
+      <div id="form-fields" class="form-fields"></div>
+      <div class="dialog-actions"><button type="button" id="cancel-dialog" class="btn btn-outline">Cancel</button><button type="submit" id="save-record" class="btn btn-primary">Save</button></div>
+    </form>
+  </dialog>
+</body>
+</html>
