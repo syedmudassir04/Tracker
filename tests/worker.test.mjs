@@ -56,6 +56,7 @@ test('company creation, hourly check, application logging, edits, and deletion w
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec('PRAGMA foreign_keys = ON');
   sqlite.exec(readFileSync(new URL('../migrations/0001_init.sql', import.meta.url), 'utf8'));
+  sqlite.exec(readFileSync(new URL('../migrations/0002_site_type.sql', import.meta.url), 'utf8'));
   const env = {
     ADMIN_PASSWORD: 'another-strong-private-test-password',
     SESSION_SECRET: 'another-local-test-secret-with-more-than-32-characters',
@@ -93,6 +94,20 @@ test('company creation, hourly check, application logging, edits, and deletion w
   }, session);
   assert.equal(created.status, 201);
   const companyId = (await created.json()).id;
+  // Exact company and normalized URL duplicates are rejected.
+  const duplicate = await call('/api/companies', 'POST', {
+    name: ' example CO ', career_url: 'https://example.com/jobs/', site_type: 'Company Website',
+  }, session);
+  assert.equal(duplicate.status, 409);
+  const sameCareerPage = await call('/api/companies', 'POST', {
+    name: 'Other Company', career_url: 'https://example.com/jobs/?utm_source=linkedin', site_type: 'Company Website',
+  }, session);
+  assert.equal(sameCareerPage.status, 409);
+  const badCareer = await call('/api/companies', 'POST', {
+    name: 'Bad Session', career_url: 'https://site.example.com/login?state=abandoned',
+  }, session);
+  assert.equal(badCareer.status, 400);
+
   let stateResponse = await call('/api/state', 'GET', undefined, session);
   let data = await stateResponse.json();
   assert.equal(data.companies.length, 1);
@@ -133,6 +148,7 @@ test('manual Google sync sends website snapshot and imports Gmail leads without 
   const { readFileSync } = await import('node:fs');
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec(readFileSync(new URL('../migrations/0001_init.sql', import.meta.url), 'utf8'));
+  sqlite.exec(readFileSync(new URL('../migrations/0002_site_type.sql', import.meta.url), 'utf8'));
   const statements = (sql) => {
     const statement = sqlite.prepare(sql);
     let args = [];

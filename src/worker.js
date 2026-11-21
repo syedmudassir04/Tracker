@@ -146,13 +146,48 @@ function validateWriteOrigin(req) {
 }
 
 function parseCompany(data) {
+  const site_type = data.site_type || 'Company Website';
+  if (!['Company Website', 'Career Website'].includes(site_type)) {
+    throw new Error('Select Company Website or Career Website.');
+  }
+  const career_url = safeHttpUrl(data.career_url);
+  if (career_url) {
+    const link = new URL(career_url);
+    if (/\/(?:login|sign_in|applythankyou|thank-you|application-success|maintenance-page|unavailableCareerSection)(?:[/?#]|$)/i.test(link.pathname)
+        || /\/(?:apply\/|careers\/applyjob\/)/i.test(link.pathname)
+        || /\/(?:apply-success|completed\/application)/i.test(link.pathname)
+        || ['state','candidateId','jobApplicationId','Job_Application_ID','token','tid'].some(key => link.searchParams.has(key))) {
+      throw new Error('Use a reusable careers/job-search page, not a login, confirmation or application-session URL.');
+    }
+  }
   return {
     name: requireText(data.name, 'Company name', 140),
-    career_url: safeHttpUrl(data.career_url),
+    career_url,
     linkedin_url: safeHttpUrl(data.linkedin_url),
+    site_type,
     notes: optionalText(data.notes, 2000),
   };
 }
+
+// Prevent duplicates without treating two employers on the same ATS hostname as identical.
+async function duplicateCompany(env, parsed, exceptId = '') {
+  const data = await env.DB.prepare('SELECT id, name, career_url FROM companies').all();
+  const normalizeName = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const urlKey = (value) => {
+    if (!value) return '';
+    try {
+      const u = new URL(value);
+      const tenant = u.searchParams.get('domain') || u.searchParams.get('jobBoardSlug') || u.searchParams.get('org') || '';
+      return u.hostname.toLowerCase() + u.pathname.replace(/\/+$/, '').toLowerCase() + (tenant ? `|${tenant.toLowerCase()}` : '');
+    }
+    catch { return ''; }
+  };
+  return data.results.find((row) => row.id !== exceptId && (
+    normalizeName(row.name) === normalizeName(parsed.name) ||
+    (parsed.career_url && row.career_url && urlKey(row.career_url) === urlKey(parsed.career_url))
+  ));
+}
+
 
 function parseApplication(data) {
   const status = optionalText(data.status, 30) || 'Not Applied';
@@ -290,11 +325,13 @@ async function api(req, env) {
   if (path === '/api/sync' && req.method === 'POST') return json(await syncGoogle(env));
   if (path === '/api/companies' && req.method === 'POST') {
     const parsed = parseCompany(await bodyJson(req));
+    const existing = await duplicateCompany(env, parsed);
+    if (existing) return fail(`Already tracked as ${existing.name}.`, 409);
     const id = crypto.randomUUID();
     await env.DB.prepare(`INSERT INTO companies
-      (id, name, career_url, linkedin_url, notes, last_checked_at, created_at)
-      VALUES (?, ?, ?, ?, ?, NULL, ?)`).bind(
-        id, parsed.name, parsed.career_url, parsed.linkedin_url, parsed.notes, new Date().toISOString(),
+      (id, name, career_url, linkedin_url, site_type, notes, last_checked_at, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, NULL, ?)`).bind(
+        id, parsed.name, parsed.career_url, parsed.linkedin_url, parsed.site_type, parsed.notes, new Date().toISOString(),
       ).run();
     return json({ ok: true, id }, 201);
   }
@@ -325,8 +362,10 @@ async function api(req, env) {
     }
     if (!companyMatch[2] && req.method === 'PUT') {
       const parsed = parseCompany(await bodyJson(req));
-      await env.DB.prepare('UPDATE companies SET name = ?, career_url = ?, linkedin_url = ?, notes = ? WHERE id = ?').bind(
-        parsed.name, parsed.career_url, parsed.linkedin_url, parsed.notes, id,
+      const duplicate = await duplicateCompany(env, parsed, id);
+      if (duplicate) return fail(`Already tracked as ${duplicate.name}.`, 409);
+      await env.DB.prepare('UPDATE companies SET name = ?, career_url = ?, linkedin_url = ?, site_type = ?, notes = ? WHERE id = ?').bind(
+        parsed.name, parsed.career_url, parsed.linkedin_url, parsed.site_type, parsed.notes, id,
       ).run();
       return json({ ok: true });
     }

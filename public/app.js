@@ -141,9 +141,11 @@ function applyCompanyStatus(button, company) {
 function renderCompanies() {
   const search = $('company-search').value.toLowerCase().trim();
   const filter = $('company-filter').value;
+  const typeFilter = $('site-filter').value;
   const visible = state.companies
     .filter((company) => `${company.name} ${company.notes}`.toLowerCase().includes(search))
     .filter((company) => filter === 'all' || (filter === 'due') === isDue(company))
+    .filter((company) => typeFilter === 'all' || (company.site_type || 'Company Website') === typeFilter)
     .sort((a, b) => Number(isDue(b)) - Number(isDue(a)) || a.name.localeCompare(b.name));
   const body = $('companies-body');
   body.replaceChildren();
@@ -152,8 +154,15 @@ function renderCompanies() {
     const nameCell = el('td');
     addChildren(nameCell, el('span', 'primary-cell', company.name),
       el('span', 'subline', company.notes || (company.last_checked_at ? `Last checked: ${istTime(company.last_checked_at)} IST` : 'Not yet checked')));
-    const careerCell = el('td'); careerCell.append(link('Open careers ↗', company.career_url));
-    const linkedinCell = el('td'); linkedinCell.append(link('Open LinkedIn ↗', company.linkedin_url));
+    const careerCell = el('td');
+    if (company.career_url) {
+      careerCell.append(el('span', `site-type ${company.site_type === 'Career Website' ? 'job-board' : 'employer'}`,
+        company.site_type || 'Company Website'));
+    }
+    careerCell.append(link('Open careers ↗', company.career_url));
+    const linkedinCell = el('td');
+    if (company.linkedin_url) linkedinCell.append(el('span', 'site-type job-board', 'Career Website'));
+    linkedinCell.append(link('Open LinkedIn ↗', company.linkedin_url));
     const statusCell = el('td'); statusCell.append(statusButton(company));
     const actions = el('td');
     addChildren(actions, addChildren(el('div', 'cell-actions'),
@@ -244,6 +253,7 @@ function openForm(kind, record) {
   $('dialog-title').textContent = `${editing ? 'Edit' : 'Add'} ${kind}`;
   const fields = kind === 'company' ? [
     { key: 'name', label: 'Company name', required: true, maxlength: 140 },
+    { key: 'site_type', label: 'Website type', type: 'select', options: ['Company Website', 'Career Website'] },
     { key: 'career_url', label: 'Careers page URL', type: 'url', placeholder: 'https://company.com/careers' },
     { key: 'linkedin_url', label: 'LinkedIn jobs URL', type: 'url', placeholder: 'https://www.linkedin.com/company/.../jobs/' },
     { key: 'notes', label: 'Notes', type: 'textarea', maxlength: 2000 },
@@ -337,6 +347,7 @@ async function initialize() {
   document.querySelectorAll('[data-page]').forEach((button) => button.addEventListener('click', () => navigate(button.dataset.page)));
   $('company-search').addEventListener('input', renderCompanies);
   $('company-filter').addEventListener('change', renderCompanies);
+  $('site-filter').addEventListener('change', renderCompanies);
   $('application-search').addEventListener('input', renderApplications);
   $('application-filter').addEventListener('change', renderApplications);
   $('add-company-btn').addEventListener('click', () => openForm('company'));

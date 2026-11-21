@@ -14,7 +14,7 @@ function setup() {
   if (!secret || secret.length < 32) throw new Error('Set SHARED_SECRET to a random value at least 32 characters long.');
   const spreadsheet = SpreadsheetApp.openById(spreadsheetId);
   ensureSheet_(spreadsheet, 'Companies', [
-    'Company Name', 'Careers Page', 'LinkedIn Jobs', 'Check Status', 'Notes', 'Last Checked (UTC)', 'Next Due (UTC)'
+    'Company Name', 'Careers Page', 'LinkedIn Jobs', 'Check Status', 'Notes', 'Website Type', 'Last Checked (UTC)', 'Next Due (UTC)'
   ]);
   ensureSheet_(spreadsheet, 'Applications', [
     'Company', 'Job Title', 'Job URL', 'Date Posted', 'Date Applied', 'Status', 'Notes'
@@ -62,22 +62,23 @@ function sync_(request) {
   const applications = Array.isArray(request.applications) ? request.applications : [];
   const stats = request.stats || {};
   const companyHeaders = [
-    'Company Name', 'Careers Page', 'LinkedIn Jobs', 'Check Status', 'Notes', 'Last Checked (UTC)', 'Next Due (UTC)'
+    'Company Name', 'Careers Page', 'LinkedIn Jobs', 'Check Status', 'Notes', 'Website Type', 'Last Checked (UTC)', 'Next Due (UTC)'
   ];
   const applicationHeaders = [
     'Company', 'Job Title', 'Job URL', 'Date Posted', 'Date Applied', 'Status', 'Notes'
   ];
   const companyRows = companies.map(function (row) {
     return [asCell_(row.name), asCell_(row.career_url), asCell_(row.linkedin_url),
-      asCell_(row.check_status), asCell_(row.notes), asCell_(row.last_checked_at), asCell_(row.next_due_at)];
+      asCell_(row.check_status), asCell_(row.notes), asCell_(row.site_type || 'Company Website'), asCell_(row.last_checked_at), asCell_(row.next_due_at)];
   });
   const applicationRows = applications.map(function (row) {
     return [asCell_(row.company_name), asCell_(row.job_title), asCell_(row.job_url),
       asCell_(row.date_posted), asCell_(row.date_applied), asCell_(row.status), asCell_(row.notes)];
   });
   const companySheet = replaceRows_(spreadsheet, 'Companies', companyHeaders, companyRows);
-  // Keep EXACTLY five company columns visible, as requested.
-  companySheet.hideColumns(6, 2);
+  // Six visible company columns: original five plus website type; timing columns stay hidden.
+  companySheet.showColumns(6);
+  companySheet.hideColumns(7, 2);
   setCompanyStatusColors_(companySheet);
   replaceRows_(spreadsheet, 'Applications', applicationHeaders, applicationRows);
 
