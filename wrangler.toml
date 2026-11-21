@@ -1,11 +1,11 @@
-name = "hyderabad-job-radar"
+name = "tracker"
 main = "src/worker.js"
 compatibility_date = "2026-11-01"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "job-radar-db"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "10ffe85c-fec8-4225-8a4d-f719a13b71b5"
 migrations_dir = "migrations"
 
 [assets]
