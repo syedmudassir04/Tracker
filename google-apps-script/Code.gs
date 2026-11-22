@@ -23,7 +23,7 @@ function setup() {
     'Received (UTC)', 'Sender', 'Subject', 'Category', 'Open Gmail', 'Message ID'
   ]);
   ensureSheet_(spreadsheet, 'Daily Summary', [
-    'Day (IST)', 'Synced At (UTC)', 'Companies', 'Checks Today', 'Due Now', 'Applications', 'Gmail Matches', 'Trigger'
+    'Day (IST)', 'Synced At (UTC)', 'Companies', 'Checks Today', 'Due Now', 'Applications', 'Gmail Matches', 'Trigger', 'Applications Today', 'Checks All Time'
   ]);
   // This intentionally prompts consent for Gmail access when setup() is run.
   GmailApp.search('newer_than:1d', 0, 1);
@@ -85,12 +85,13 @@ function sync_(request) {
   const gmailMessages = scanGmail_();
   appendNewGmail_(spreadsheet, gmailMessages);
   const summary = ensureSheet_(spreadsheet, 'Daily Summary', [
-    'Day (IST)', 'Synced At (UTC)', 'Companies', 'Checks Today', 'Due Now', 'Applications', 'Gmail Matches', 'Trigger'
+    'Day (IST)', 'Synced At (UTC)', 'Companies', 'Checks Today', 'Due Now', 'Applications', 'Gmail Matches', 'Trigger', 'Applications Today', 'Checks All Time'
   ]);
   summary.appendRow([
     asCell_(request.date_key), new Date().toISOString(), companies.length,
     Number(stats.checks_today || 0), Number(stats.due_now || 0), applications.length,
-    gmailMessages.length, asCell_(request.trigger || 'manual')
+    gmailMessages.length, asCell_(request.trigger || 'manual'),
+    Number(stats.applications_today || 0), Number(stats.checks_all_time || 0)
   ]);
   SpreadsheetApp.flush();
   return { ok: true, gmail_messages: gmailMessages };

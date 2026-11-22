@@ -14,5 +14,5 @@ binding = "ASSETS"
 run_worker_first = true
 
 [triggers]
-# 13:30 UTC = 19:00 India Standard Time, every day.
+# 13:30 UTC = 19:00 India Standard Time
 crons = ["30 13 * * *"]

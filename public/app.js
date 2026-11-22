@@ -1,9 +1,16 @@
 'use strict';
+import { LocalDocumentLibrary, validateDocument } from './local-files.js';
 
 const IST = 'Asia/Kolkata';
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const STATUS_OPTIONS = ['Not Applied', 'Applied', 'Assessment', 'Interview', 'Rejected', 'Offer'];
-const state = { companies: [], applications: [], emails: [], checksToday: 0, lastSync: null, bridgeConfigured: false };
+const state = {
+  companies: [], applications: [], emails: [], files: [], dailyActivity: [], checksToday: 0,
+  checksAllTime: 0, applicationsToday: 0, undatedApplications: 0,
+  lastSync: null, bridgeConfigured: false,
+};
+const localDocuments = new LocalDocumentLibrary();
+let activeFileApplicationId = null;
 let activePage = 'companies';
 let toastTimer;
 
@@ -81,7 +88,10 @@ async function loadState() {
   const result = await api('/api/state');
   Object.assign(state, {
     companies: result.companies || [], applications: result.applications || [],
-    emails: result.emails || [], checksToday: result.checksToday || 0,
+    emails: result.emails || [], dailyActivity: result.dailyActivity || [],
+    checksToday: result.checksToday || 0, checksAllTime: result.checksAllTime || 0,
+    applicationsToday: result.applicationsToday || 0,
+    undatedApplications: result.undatedApplications || 0,
     lastSync: result.lastSync, bridgeConfigured: result.bridgeConfigured,
   });
   renderAll();
@@ -90,6 +100,8 @@ function renderStats() {
   $('stat-companies').textContent = state.companies.length;
   $('stat-due').textContent = state.companies.filter((company) => isDue(company)).length;
   $('stat-checks').textContent = state.checksToday;
+  $('stat-total-checks').textContent = state.checksAllTime;
+  $('stat-apps-today').textContent = state.applicationsToday;
   $('stat-apps').textContent = state.applications.length;
 }
 function renderSyncStatus() {
@@ -119,6 +131,11 @@ function statusButton(company) {
       const result = await api(`/api/companies/${company.id}/check`, 'POST');
       company.last_checked_at = result.last_checked_at;
       state.checksToday += 1;
+      state.checksAllTime += 1;
+      const today = istDateToday();
+      const dailyRow = state.dailyActivity.find((row) => row.day === today);
+      if (dailyRow) dailyRow.checks += 1;
+      renderDailyActivity();
       renderCompanies();
       renderStats();
       toast(`${company.name}: checked. Recheck in 24 hours.`);
@@ -188,11 +205,16 @@ function renderApplications() {
     const title = el('td');
     addChildren(title, el('span', 'primary-cell', app.job_title), el('span', 'subline', app.company_name));
     const jobUrl = el('td'); jobUrl.append(link('Open listing ↗', app.job_url));
-    const date = el('td', '', app.date_applied || 'Not applied');
+    const date = el('td', '', app.date_applied || 'No applied date');
+    if (state.files.some((file) => file.application_id === app.id)) {
+      const attached = state.files.filter((file) => file.application_id === app.id);
+      date.append(el('span', 'subline', attached.map((file) => file.kind === 'resume' ? 'Resume saved' : 'Cover letter saved').join(' · ')));
+    }
     const status = el('td'); status.append(el('span', `label-pill ${app.status.replace(/[^a-zA-Z]/g, '')}`, app.status));
     const actions = el('td');
     addChildren(actions, addChildren(el('div', 'cell-actions'),
       actionButton('Edit', () => openForm('application', app)),
+      actionButton('Files', () => openFiles(app.id)),
       actionButton('Delete', () => removeRecord('application', app), true)));
     addChildren(row, title, jobUrl, date, status, actions);
     body.append(row);
@@ -214,12 +236,224 @@ function renderEmails() {
   }
   $('emails-empty').hidden = state.emails.length !== 0;
 }
+function renderDailyActivity() {
+  const tbody = $('daily-body');
+  tbody.replaceChildren();
+  for (const rowData of state.dailyActivity) {
+    const row = el('tr');
+    const day = el('td', 'daily-date', new Date(`${rowData.day}T12:00:00+05:30`).toLocaleDateString('en-IN', {
+      timeZone: IST, day: '2-digit', month: 'short', year: 'numeric', weekday: 'short',
+    }));
+    const applications = el('td', 'daily-num', rowData.applications);
+    const checks = el('td', 'daily-num', rowData.checks);
+    if (rowData.day === istDateToday()) row.classList.add('today-row');
+    addChildren(row, day, applications, checks);
+    tbody.append(row);
+  }
+  $('undated-warning').hidden = state.undatedApplications === 0;
+  $('undated-warning').textContent = `${state.undatedApplications} application(s) have a status beyond Not Applied but no Date applied. Add their original date to count them in the daily totals.`;
+}
+
+function documentLabel(kind) { return kind === 'resume' ? 'Resume' : 'Cover letter'; }
+function fileSize(bytes) { return bytes < 1048576 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1048576).toFixed(1)} MB`; }
+function folderStatus() {
+  const status = $('folder-status');
+  const reconnect = $('reconnect-folder-btn');
+  const warning = $('documents-warning');
+  reconnect.hidden = !localDocuments.root || localDocuments.ready;
+  if (!localDocuments.supported) {
+    status.textContent = 'This browser cannot write directly to laptop folders.';
+    warning.textContent = 'Open this website in Chrome or Microsoft Edge on your laptop. Your files will stay locally stored.';
+  } else if (localDocuments.ready) {
+    status.textContent = `Connected to: ${localDocuments.folderName} · Files stay on this laptop`;
+  } else if (localDocuments.root) {
+    status.textContent = `Folder remembered: ${localDocuments.folderName} · Reconnect required`;
+    warning.textContent = 'The browser needs renewed permission to access your saved folder. Click Reconnect folder.';
+  } else {
+    status.textContent = 'No laptop folder selected';
+    warning.textContent = 'Choose a dedicated folder on your computer. The site will create one Role - Company - Date subfolder per application.';
+  }
+  warning.hidden = localDocuments.ready;
+}
+
+async function refreshLocalDocuments() {
+  try {
+    state.files = localDocuments.ready ? await localDocuments.scan() : [];
+  } catch (error) {
+    state.files = [];
+    toast(`Local folder: ${error.message}`);
+  }
+  folderStatus();
+  updateApplicationFolderStatus();
+  renderDocuments();
+  renderApplications();
+  if (activeFileApplicationId && $('file-dialog').open) renderFilesModal();
+}
+
+async function chooseLocalFolder() {
+  try {
+    await localDocuments.chooseFolder();
+    await refreshLocalDocuments();
+    toast(`Using laptop folder: ${localDocuments.folderName}.`);
+  } catch (error) {
+    if (error.name !== 'AbortError') toast(error.message);
+    folderStatus();
+    updateApplicationFolderStatus();
+  }
+}
+async function reconnectLocalFolder() {
+  try {
+    await localDocuments.reconnect();
+    await refreshLocalDocuments();
+    toast(`Reconnected: ${localDocuments.folderName}.`);
+  } catch (error) { toast(error.message); folderStatus(); updateApplicationFolderStatus(); }
+}
+
+async function openLocalFile(record, view = false) {
+  // Opening a blank tab synchronously avoids popup blockers while reading an async local file.
+  const preview = view ? window.open('about:blank', '_blank') : null;
+  try {
+    const file = await localDocuments.getFile(record);
+    const url = URL.createObjectURL(file);
+    if (view && preview) {
+      preview.location.href = url;
+      setTimeout(() => URL.revokeObjectURL(url), 180000);
+    } else {
+      if (preview) preview.close();
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = record.filename;
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+    }
+  } catch (error) {
+    if (preview) preview.close();
+    toast(`Unable to open local file: ${error.message}`);
+  }
+}
+function documentLinks(file) {
+  const outer = el('span', 'file-links');
+  if (file.media_type === 'application/pdf') outer.append(actionButton('View PDF ↗', () => openLocalFile(file, true)));
+  outer.append(actionButton('Download ↗', () => openLocalFile(file, false)));
+  return outer;
+}
+function renderDocuments() {
+  folderStatus();
+  const term = $('documents-search').value.trim().toLowerCase();
+  const visible = state.files.filter((file) => `${file.company_name} ${file.job_title} ${file.filename} ${file.folder_name} ${documentLabel(file.kind)}`.toLowerCase().includes(term));
+  const body = $('documents-body');
+  body.replaceChildren();
+  for (const file of visible) {
+    const row = el('tr');
+    const application = el('td');
+    const exists = state.applications.some((a) => a.id === file.application_id);
+    addChildren(application, el('span', 'primary-cell', file.company_name),
+      el('span', 'subline', `${file.job_title}${exists ? '' : ' · Application deleted from tracker'}`),
+      el('span', 'subline', `Folder: ${file.folder_name}`));
+    const type = el('td'); type.append(el('span', 'label-pill', documentLabel(file.kind)));
+    const filename = el('td');
+    addChildren(filename, el('span', 'primary-cell', file.filename), el('span', 'subline', fileSize(file.file_size)));
+    const when = el('td', '', istTime(file.uploaded_at));
+    const controls = el('td');
+    controls.append(documentLinks(file));
+    if (exists) controls.append(actionButton('Manage', () => openFiles(file.application_id)));
+    else controls.append(actionButton('Remove', () => removeFile(file), true));
+    addChildren(row, application, type, filename, when, controls);
+    body.append(row);
+  }
+  $('documents-empty').hidden = visible.length !== 0;
+  $('documents-empty').textContent = !localDocuments.ready
+    ? 'Choose or reconnect your laptop folder to show saved documents.'
+    : 'No local documents yet. Go to Applications → Add application to attach a resume and cover letter.';
+}
+
+function openFiles(applicationId) {
+  activeFileApplicationId = applicationId;
+  $('file-upload-error').textContent = '';
+  renderFilesModal();
+  $('file-dialog').showModal();
+}
+
+function renderFilesModal() {
+  const application = state.applications.find((app) => app.id === activeFileApplicationId);
+  if (!application) { $('file-dialog').close(); activeFileApplicationId = null; return; }
+  $('file-dialog-title').textContent = 'Application documents';
+  $('file-dialog-subtitle').textContent = `${application.company_name} · ${application.job_title}`;
+  const note = $('files-folder-note');
+  note.textContent = localDocuments.ready
+    ? `Laptop folder: ${localDocuments.folderName} → ${localDocuments.folders.get(application.id)?.name || 'New folder: ' + folderNameForDisplay(application)}`
+    : 'Go to Documents → Choose laptop folder, then return here to save files.';
+  for (const kind of ['resume', 'cover_letter']) {
+    const slot = $(`file-slot-${kind}`);
+    slot.replaceChildren();
+    slot.append(el('h3', '', documentLabel(kind)));
+    const existing = state.files.find((f) => f.application_id === application.id && f.kind === kind);
+    if (existing) {
+      slot.append(el('p', 'file-info', `${existing.filename} · ${fileSize(existing.file_size)} · ${istTime(existing.uploaded_at)} IST`));
+      const buttons = el('div', 'file-actions');
+      buttons.append(documentLinks(existing));
+      buttons.append(actionButton('Remove', () => removeFile(existing), true));
+      slot.append(buttons);
+    } else slot.append(el('p', 'small muted', 'No file saved yet.'));
+    const row = el('div', 'upload-row');
+    const input = el('input');
+    input.type = 'file';
+    input.accept = '.pdf,.docx,.doc';
+    input.setAttribute('aria-label', `Select ${documentLabel(kind)} file`);
+    const upload = el('button', 'btn btn-primary', existing ? 'Replace file' : 'Save to laptop');
+    upload.type = 'button';
+    upload.disabled = !localDocuments.ready;
+    upload.addEventListener('click', () => uploadFile(application.id, kind, input, upload));
+    row.append(input, upload);
+    slot.append(row);
+  }
+}
+
+function folderNameForDisplay(application) {
+  const date = application.date_applied || (application.created_at || '').slice(0,10) || 'Undated';
+  return `${application.job_title} - ${application.company_name} - ${date}`;
+}
+
+async function uploadFile(applicationId, kind, input, button) {
+  const file = input.files?.[0];
+  if (!file) { $('file-upload-error').textContent = 'Select a document first.'; return; }
+  const application = state.applications.find((app) => app.id === applicationId);
+  if (!application) return;
+  if (state.files.some((f) => f.application_id === applicationId && f.kind === kind) &&
+      !window.confirm(`Replace the saved ${documentLabel(kind).toLowerCase()} in the laptop folder?`)) return;
+  button.disabled = true;
+  button.textContent = 'Saving locally…';
+  $('file-upload-error').textContent = '';
+  try {
+    const folder = await localDocuments.save(application, kind, file);
+    await refreshLocalDocuments();
+    toast(`${documentLabel(kind)} saved to ${folder}.`);
+  } catch (error) {
+    $('file-upload-error').textContent = error.message;
+    button.disabled = false;
+    button.textContent = 'Try again';
+  }
+}
+
+async function removeFile(file) {
+  if (!window.confirm(`Delete ${file.filename} from your laptop folder? This cannot be undone.`)) return;
+  try {
+    await localDocuments.remove(file);
+    await refreshLocalDocuments();
+    toast('Local document removed.');
+  } catch (error) { $('file-upload-error').textContent = error.message; toast(error.message); }
+}
+
 function renderAll() {
-  renderStats(); renderSyncStatus(); renderCompanies(); renderApplications(); renderEmails();
+  renderStats(); renderSyncStatus(); renderCompanies(); renderApplications();
+  renderDailyActivity(); renderDocuments(); renderEmails();
+  if (activeFileApplicationId && $('file-dialog').open) renderFilesModal();
 }
 function navigate(page) {
   activePage = page;
-  ['companies', 'applications', 'emails'].forEach((item) => {
+  ['companies', 'applications', 'documents', 'emails'].forEach((item) => {
     $(`${item}-page`).hidden = item !== page;
   });
   document.querySelectorAll('[data-page]').forEach((btn) => btn.classList.toggle('active', btn.dataset.page === page));
@@ -248,6 +482,61 @@ function field(config, value) {
   label.append(input);
   return label;
 }
+/** File pickers live inside Add/Edit Application, not in a separate post-save step. */
+function updateApplicationFolderStatus() {
+  const status = $('application-folder-status');
+  const reconnect = $('application-reconnect-folder-btn');
+  if (!status) return;
+  reconnect.hidden = !localDocuments.root || localDocuments.ready;
+  if (!localDocuments.supported) {
+    status.textContent = 'Local folder upload requires Chrome or Edge on your laptop.';
+  } else if (localDocuments.ready) {
+    status.textContent = `Saving to laptop folder: ${localDocuments.folderName}`;
+  } else if (localDocuments.root) {
+    status.textContent = `Folder ${localDocuments.folderName} needs permission. Click Reconnect folder.`;
+  } else {
+    status.textContent = 'Choose a laptop folder before saving attachments (only needed once).';
+  }
+}
+function applicationAttachmentFields(application) {
+  const section = el('section', 'application-attachments');
+  section.id = 'application-attachments';
+  section.append(el('h3', '', 'Resume and cover letter'));
+  section.append(el('p', 'small muted', 'Optional. Attach the exact files used for this application. They are saved ONLY to your chosen laptop folder. PDF, DOCX or DOC, maximum 8 MB per file.'));
+  const folder = el('div', 'application-folder-toolbar');
+  const choose = el('button', 'btn btn-outline', 'Choose laptop folder');
+  choose.type = 'button';
+  choose.id = 'application-choose-folder-btn';
+  choose.addEventListener('click', chooseLocalFolder);
+  const reconnect = el('button', 'btn btn-outline', 'Reconnect folder');
+  reconnect.type = 'button';
+  reconnect.id = 'application-reconnect-folder-btn';
+  reconnect.hidden = true;
+  reconnect.addEventListener('click', reconnectLocalFolder);
+  folder.append(choose, reconnect);
+  const status = el('p', 'small muted');
+  status.id = 'application-folder-status';
+  folder.append(status);
+  section.append(folder);
+  for (const kind of ['resume', 'cover_letter']) {
+    const label = el('label', 'attachment-label', `${documentLabel(kind)} (optional)`);
+    const input = el('input');
+    input.type = 'file';
+    input.accept = '.pdf,.docx,.doc';
+    input.id = `application-file-${kind}`;
+    input.setAttribute('aria-label', `Attach ${documentLabel(kind).toLowerCase()}`);
+    // Deliberately no name attribute. File objects must NEVER be sent to the API.
+    label.append(input);
+    const previouslySaved = application && state.files.find(file => file.application_id === application.id && file.kind === kind);
+    if (previouslySaved) label.append(el('span', 'small muted', `Already saved: ${previouslySaved.filename}. Selecting another file replaces it.`));
+    section.append(label);
+  }
+  const error = el('p', 'small error');
+  error.id = 'application-attachment-error';
+  error.setAttribute('role', 'alert');
+  section.append(error);
+  return section;
+}
 function openForm(kind, record) {
   const editing = Boolean(record);
   $('dialog-title').textContent = `${editing ? 'Edit' : 'Add'} ${kind}`;
@@ -273,8 +562,20 @@ function openForm(kind, record) {
     if (!record && kind === 'application' && config.key === 'status') value = 'Not Applied';
     container.append(field(config, value));
   }
+  if (kind === 'application') {
+    const status = container.querySelector('[name="status"]');
+    const appliedDate = container.querySelector('[name="date_applied"]');
+    const fillDate = () => {
+      if (status.value !== 'Not Applied' && !appliedDate.value && !record) appliedDate.value = istDateToday();
+    };
+    status.addEventListener('change', fillDate);
+    fillDate();
+    container.append(applicationAttachmentFields(record));
+    updateApplicationFolderStatus();
+  }
   $('record-form').dataset.kind = kind;
   $('record-form').dataset.id = record?.id || '';
+  $('save-record').textContent = kind === 'application' ? (editing ? 'Save changes and files' : 'Save application and files') : 'Save';
   $('form-dialog').showModal();
   const first = container.querySelector('input');
   if (first) first.focus();
@@ -283,22 +584,57 @@ async function saveRecord(event) {
   event.preventDefault();
   const form = $('record-form');
   const kind = form.dataset.kind;
-  const id = form.dataset.id;
+  const originalId = form.dataset.id;
   const record = Object.fromEntries(new FormData(form).entries());
   const base = kind === 'company' ? '/api/companies' : '/api/applications';
+  const attachments = kind === 'application'
+    ? ['resume', 'cover_letter'].map((type) => ({ type, file: $(`application-file-${type}`)?.files?.[0] })).filter((item) => item.file)
+    : [];
   const submit = $('save-record');
+  const errorOutput = $('application-attachment-error');
+  if (errorOutput) errorOutput.textContent = '';
   submit.disabled = true;
+  let createdId = null;
   try {
-    await api(id ? `${base}/${id}` : base, id ? 'PUT' : 'POST', record);
+    // Validate local prerequisites BEFORE creating a new D1 application record.
+    if (attachments.length) {
+      if (!localDocuments.ready) throw new Error('Choose or reconnect your laptop folder before saving the attached files.');
+      for (const item of attachments) await validateDocument(item.file);
+    }
+    const result = await api(originalId ? `${base}/${originalId}` : base,
+      originalId ? 'PUT' : 'POST', record);
+    const savedId = originalId || result.id;
+    if (kind === 'application' && !originalId) {
+      // If writing a local file fails, retry will UPDATE rather than duplicate the application.
+      createdId = savedId;
+      form.dataset.id = savedId;
+    }
+    if (attachments.length) {
+      const old = state.applications.find((app) => app.id === savedId);
+      const application = {
+        ...old, ...record, id: savedId,
+        created_at: old?.created_at || new Date().toISOString(),
+      };
+      for (const item of attachments) await localDocuments.save(application, item.type, item.file);
+      await refreshLocalDocuments();
+    }
     $('form-dialog').close();
     await loadState();
-    toast(`${kind === 'company' ? 'Company' : 'Application'} saved.`);
-  } catch (error) { toast(error.message); }
-  finally { submit.disabled = false; }
+    toast(kind === 'application'
+      ? `Application saved${attachments.length ? ` with ${attachments.length} local document(s)` : ''}. View files under Documents.`
+      : 'Company saved.');
+  } catch (error) {
+    const message = createdId
+      ? `The application was saved, but a document could not be stored: ${error.message}. Fix the problem and click Save again. The application will NOT be duplicated.`
+      : error.message;
+    if (errorOutput) errorOutput.textContent = message;
+    toast(message);
+  } finally { submit.disabled = false; }
 }
+
 async function removeRecord(kind, record) {
   const label = kind === 'company' ? record.name : `${record.company_name}: ${record.job_title}`;
-  if (!window.confirm(`Delete ${label}?${kind === 'company' ? ' Its check history will also be deleted.' : ''}`)) return;
+  if (!window.confirm(`Delete ${label}?${kind === 'company' ? ' Its historical checks will remain in your overall totals.' : ' Local documents will remain on your laptop.'}`)) return;
   try {
     await api(`${kind === 'company' ? '/api/companies' : '/api/applications'}/${record.id}`, 'DELETE');
     await loadState();
@@ -338,6 +674,8 @@ async function initialize() {
       await api('/api/login', 'POST', { password: $('login-password').value });
       showApp();
       await loadState();
+      await localDocuments.restore();
+      await refreshLocalDocuments();
     } catch (error) { $('login-error').textContent = error.message; }
   });
   $('logout-btn').addEventListener('click', async () => {
@@ -350,17 +688,24 @@ async function initialize() {
   $('site-filter').addEventListener('change', renderCompanies);
   $('application-search').addEventListener('input', renderApplications);
   $('application-filter').addEventListener('change', renderApplications);
+  $('documents-search').addEventListener('input', renderDocuments);
+  $('choose-folder-btn').addEventListener('click', chooseLocalFolder);
+  $('reconnect-folder-btn').addEventListener('click', reconnectLocalFolder);
+  $('refresh-documents-btn').addEventListener('click', refreshLocalDocuments);
   $('add-company-btn').addEventListener('click', () => openForm('company'));
   $('add-application-btn').addEventListener('click', () => openForm('application'));
   $('record-form').addEventListener('submit', saveRecord);
   $('close-dialog').addEventListener('click', () => $('form-dialog').close());
   $('cancel-dialog').addEventListener('click', () => $('form-dialog').close());
   $('sync-btn').addEventListener('click', syncNow);
+  $('close-file-dialog').addEventListener('click', () => $('file-dialog').close());
+  $('finish-file-dialog').addEventListener('click', () => $('file-dialog').close());
+  $('file-dialog').addEventListener('close', () => { activeFileApplicationId = null; });
   navigate('companies');
   try {
     const result = await api('/api/me');
     if (!result.authenticated) showLogin();
-    else { showApp(); await loadState(); }
+    else { showApp(); await loadState(); await localDocuments.restore(); await refreshLocalDocuments(); }
   } catch (error) { showLogin(); $('login-error').textContent = error.message; }
   setInterval(updateTimers, 1000);
   setInterval(() => { if (!$('app-view').hidden) renderCompanies(); }, 60000);

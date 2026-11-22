@@ -204,17 +204,39 @@ function parseApplication(data) {
   };
 }
 
+function dailyActivity(checkRows, applicationRows, todayKey = getIstDateKey()) {
+  const byDay = new Map();
+  const [year, month, day] = todayKey.split('-').map(Number);
+  for (let offset = 29; offset >= 0; offset--) {
+    const key = new Date(Date.UTC(year, month - 1, day - offset)).toISOString().slice(0, 10);
+    byDay.set(key, { day: key, checks: 0, applications: 0 });
+  }
+  for (const row of checkRows) if (byDay.has(row.day)) byDay.get(row.day).checks = Number(row.total);
+  for (const row of applicationRows) if (byDay.has(row.day)) byDay.get(row.day).applications = Number(row.total);
+  return [...byDay.values()].reverse();
+}
+
 async function getState(env) {
-  const [companies, applications, emails, sync, checked] = await Promise.all([
+  const todayKey = getIstDateKey();
+  const windowStart = new Date(Date.parse(`${todayKey}T00:00:00+05:30`) - 29 * 86400000).toISOString();
+  const [companies, applications, emails, sync, checked, allChecks, dailyChecks, dailyApplications] = await Promise.all([
     env.DB.prepare('SELECT * FROM companies ORDER BY name COLLATE NOCASE ASC').all(),
     env.DB.prepare('SELECT * FROM applications ORDER BY created_at DESC').all(),
     env.DB.prepare('SELECT * FROM email_leads ORDER BY received_at DESC LIMIT 100').all(),
     env.DB.prepare('SELECT * FROM sync_runs ORDER BY started_at DESC LIMIT 1').first(),
-    env.DB.prepare('SELECT COUNT(*) AS count FROM check_log WHERE checked_at >= ?').bind(getIstDayStartUtc()).first(),
+    env.DB.prepare('SELECT (SELECT COUNT(*) FROM check_log WHERE checked_at >= ?) + (SELECT COUNT(*) FROM archived_check_log WHERE checked_at >= ?) AS count').bind(getIstDayStartUtc(), getIstDayStartUtc()).first(),
+    env.DB.prepare('SELECT (SELECT COUNT(*) FROM check_log) + (SELECT COUNT(*) FROM archived_check_log) AS count').first(),
+    env.DB.prepare("SELECT date(checked_at, '+330 minutes') AS day, COUNT(*) AS total FROM (SELECT checked_at FROM check_log UNION ALL SELECT checked_at FROM archived_check_log) WHERE checked_at >= ? GROUP BY day").bind(windowStart).all(),
+    env.DB.prepare("SELECT date_applied AS day, COUNT(*) AS total FROM applications WHERE date_applied >= ? AND date_applied != '' GROUP BY date_applied").bind(windowStart.slice(0, 10)).all(),
   ]);
+  const appliedToday = applications.results.filter((a) => a.date_applied === todayKey).length;
+  const undatedApplications = applications.results.filter((a) => !a.date_applied && a.status !== 'Not Applied').length;
   return {
     ok: true, companies: companies.results, applications: applications.results,
-    emails: emails.results, lastSync: sync || null, checksToday: Number(checked?.count ?? 0),
+    emails: emails.results,
+    lastSync: sync || null, checksToday: Number(checked?.count ?? 0),
+    checksAllTime: Number(allChecks?.count ?? 0), applicationsToday: appliedToday,
+    undatedApplications, dailyActivity: dailyActivity(dailyChecks.results, dailyApplications.results, todayKey),
     bridgeConfigured: Boolean(env.APPS_SCRIPT_URL && env.BRIDGE_SHARED_SECRET),
     serverNow: new Date().toISOString(),
   };
@@ -229,10 +251,11 @@ async function syncGoogle(env, triggerType = 'manual') {
   let countApps = 0;
   let countEmails = 0;
   try {
-    const [companyRows, applicationRows, checksToday] = await Promise.all([
+    const [companyRows, applicationRows, checksToday, checksAllTime] = await Promise.all([
       env.DB.prepare('SELECT * FROM companies ORDER BY name COLLATE NOCASE').all(),
       env.DB.prepare('SELECT * FROM applications ORDER BY created_at DESC').all(),
-      env.DB.prepare('SELECT COUNT(*) AS count FROM check_log WHERE checked_at >= ?').bind(getIstDayStartUtc()).first(),
+      env.DB.prepare('SELECT (SELECT COUNT(*) FROM check_log WHERE checked_at >= ?) + (SELECT COUNT(*) FROM archived_check_log WHERE checked_at >= ?) AS count').bind(getIstDayStartUtc(), getIstDayStartUtc()).first(),
+      env.DB.prepare('SELECT (SELECT COUNT(*) FROM check_log) + (SELECT COUNT(*) FROM archived_check_log) AS count').first(),
     ]);
     const now = Date.now();
     const companies = companyRows.results.map((company) => ({
@@ -254,7 +277,8 @@ async function syncGoogle(env, triggerType = 'manual') {
         secret: env.BRIDGE_SHARED_SECRET,
         action: 'sync', trigger: triggerType, date_key: getIstDateKey(),
         companies, applications,
-        stats: { checks_today: Number(checksToday?.count ?? 0), due_now: dueCount },
+        stats: { checks_today: Number(checksToday?.count ?? 0), checks_all_time: Number(checksAllTime?.count ?? 0),
+          applications_today: applications.filter((a) => a.date_applied === getIstDateKey()).length, due_now: dueCount },
       }),
       redirect: 'follow',
       signal: AbortSignal.timeout(25000),
@@ -371,7 +395,12 @@ async function api(req, env) {
       return json({ ok: true });
     }
     if (!companyMatch[2] && req.method === 'DELETE') {
-      await env.DB.prepare('DELETE FROM companies WHERE id = ?').bind(id).run();
+      const company = await env.DB.prepare('SELECT name FROM companies WHERE id = ?').bind(id).first();
+      await env.DB.batch([
+        env.DB.prepare(`INSERT OR IGNORE INTO archived_check_log (id, company_name, checked_at)
+          SELECT id, ?, checked_at FROM check_log WHERE company_id = ?`).bind(company.name, id),
+        env.DB.prepare('DELETE FROM companies WHERE id = ?').bind(id),
+      ]);
       return json({ ok: true });
     }
   }

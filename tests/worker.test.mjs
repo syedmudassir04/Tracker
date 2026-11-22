@@ -57,6 +57,7 @@ test('company creation, daily check, application logging, edits, and deletion wo
   sqlite.exec('PRAGMA foreign_keys = ON');
   sqlite.exec(readFileSync(new URL('../migrations/0001_init.sql', import.meta.url), 'utf8'));
   sqlite.exec(readFileSync(new URL('../migrations/0002_site_type.sql', import.meta.url), 'utf8'));
+  sqlite.exec(readFileSync(new URL('../migrations/0003_application_documents.sql', import.meta.url), 'utf8'));
   const env = {
     ADMIN_PASSWORD: 'another-strong-private-test-password',
     SESSION_SECRET: 'another-local-test-secret-with-more-than-32-characters',
@@ -136,6 +137,7 @@ test('company creation, daily check, application logging, edits, and deletion wo
   const erased = await call(`/api/companies/${companyId}`, 'DELETE', undefined, session);
   assert.equal(erased.status, 200);
   assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM check_log').get().n, 0);
+  assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM archived_check_log').get().n, 1);
   stateResponse = await call('/api/state', 'GET', undefined, session);
   data = await stateResponse.json();
   assert.equal(data.companies.length, 0);
@@ -149,6 +151,7 @@ test('manual Google sync sends website snapshot and imports Gmail leads without 
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec(readFileSync(new URL('../migrations/0001_init.sql', import.meta.url), 'utf8'));
   sqlite.exec(readFileSync(new URL('../migrations/0002_site_type.sql', import.meta.url), 'utf8'));
+  sqlite.exec(readFileSync(new URL('../migrations/0003_application_documents.sql', import.meta.url), 'utf8'));
   const statements = (sql) => {
     const statement = sqlite.prepare(sql);
     let args = [];
