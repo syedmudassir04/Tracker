@@ -138,7 +138,7 @@ function setCompanyStatusColors_(sheet) {
     .whenTextContains("Didn't check").setBackground('#fee2e2').setFontColor('#991b1b')
     .setRanges([range]).build();
   const green = SpreadsheetApp.newConditionalFormatRule()
-    .whenTextContains('Need to check back in an hour').setBackground('#dcfce7').setFontColor('#166534')
+    .whenTextContains('Check back in 24 hours').setBackground('#dcfce7').setFontColor('#166534')
     .setRanges([range]).build();
   sheet.setConditionalFormatRules([red, green]);
 }

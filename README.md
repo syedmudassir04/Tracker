@@ -1,14 +1,14 @@
 # Hyderabad Job Radar
 
-A private, Cloudflare-hosted job-tracking web application with **independent 60-minute company check timers**, an application tracker, Gmail job-email leads, and a daily Google Sheets export.
+A private, Cloudflare-hosted job-tracking web application with **independent 24-hour company check timers**, an application tracker, Gmail job-email leads, and a daily Google Sheets export.
 
 **Nothing here requires a paid third-party service.** Cloudflare Workers and D1 have free allowances, but limits and availability depend on your Cloudflare account. Google Apps Script also has service quotas.
 
 ## What it does
 
 - Add your own company names, careers URLs, LinkedIn Jobs URLs, and notes. No companies are preloaded.
-- Click the single red **Didn't check** button after you visit a company's job pages. It turns green and shows **Need to check back in an hour**.
-- Exactly 60 minutes after that company's last check, its status becomes due. The web page recalculates the status every second; reopening the site also calculates the correct status from the saved timestamp. Companies' timers are independent.
+- Click the single red **Didn't check** button after you visit a company's job pages. It turns green and shows **Check back in 24 hours**.
+- Exactly 24 hours after that company's last check, its status becomes due. The web page recalculates the status every second; reopening the site also calculates the correct status from the saved timestamp. Companies' timers are independent.
 - Prioritize overdue companies and filter/search quickly. The app keeps a history of checks in Cloudflare D1.
 - Log jobs you discover and update their application statuses.
 - At **7:00 PM India Standard Time daily**, a Cloudflare Cron Trigger initiates a Google sync. It updates Google Sheets with the latest companies/applications and searches Gmail for matching job-related emails.
@@ -129,7 +129,7 @@ Open the Google Sheet. It should contain four tabs: **Companies**, **Application
 1. Open the web application and click the red **Didn't check** companies first.
 2. Check the career site and LinkedIn link, then click the red status button to record your check.
 3. Apply to relevant openings immediately; create an application record to track each one.
-4. Each company becomes due again after one hour, independently of all other companies.
+4. Each company becomes due again after 24 hours, independently of all other companies.
 5. At **7:00 PM IST**, the scheduled Google sync runs. Cloudflare Cron Triggers use UTC, so the configured schedule is `30 13 * * *`. Cron execution may be delayed by a few minutes.
 6. To sync earlier, use **Sync Google now**.
 
@@ -138,7 +138,7 @@ Open the Google Sheet. It should contain four tabs: **Companies**, **Application
 - This app **does not continuously scrape company websites or LinkedIn**. It tracks your manual checking. Automated scraping of LinkedIn may run afoul of site restrictions, and career-site integrations vary by company.
 - **Gmail is checked only during a Google sync**, not continuously. The sample searches the past 48 hours and up to 80 matching Gmail threads per sync. These are configurable caps in `Code.gs`; search matching is heuristic and can miss notifications.
 - **Google Sheets receives snapshots only at sync time**. It is a one-way report, not a live two-way editor. Edits directly to Companies or Applications tabs are overwritten by the next sync. Use the web application for editing.
-- Only the app website has live hourly status updates. The Google Sheet's red/green status reflects the last export.
+- Only the app website has live 24-hour check-status updates. The Google Sheet's red/green status reflects the last export.
 - The application stores check records and application data in Cloudflare D1. Deleting the database deletes this source data. Create regular backups if it becomes important.
 - A single-user password protects API access. Use a strong unique password, keep the URL private, consider Cloudflare Access and rate limiting, and do not reuse a Google account password.
 - Both the Apps Script URL and its shared secret must be configured correctly. Never put any of the secrets in `public/` or GitHub.

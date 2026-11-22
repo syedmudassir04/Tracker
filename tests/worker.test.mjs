@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import worker, { checkStatus, getIstDateKey, getIstDayStartUtc, safeHttpUrl } from '../src/worker.js';
 
-test('one-hour status uses independent timestamps and expires at exact hour', () => {
+test('daily status uses independent timestamps and expires after 24 hours', () => {
   const start = Date.parse('2026-11-20T08:00:00.000Z');
   assert.equal(checkStatus(null, start), 'due');
-  assert.equal(checkStatus(new Date(start).toISOString(), start + 59 * 60 * 1000), 'waiting');
-  assert.equal(checkStatus(new Date(start).toISOString(), start + 60 * 60 * 1000), 'due');
+  assert.equal(checkStatus(new Date(start).toISOString(), start + (24 * 60 - 1) * 60 * 1000), 'waiting');
+  assert.equal(checkStatus(new Date(start).toISOString(), start + 24 * 60 * 60 * 1000), 'due');
   assert.equal(checkStatus('invalid', start), 'due');
 });
 
@@ -50,7 +50,7 @@ test('login issues a secure signed cookie and authenticated session is recognize
   assert.equal((await anon.json()).authenticated, false);
 });
 
-test('company creation, hourly check, application logging, edits, and deletion work against SQL schema', async () => {
+test('company creation, daily check, application logging, edits, and deletion work against SQL schema', async () => {
   const { DatabaseSync } = await import('node:sqlite');
   const { readFileSync } = await import('node:fs');
   const sqlite = new DatabaseSync(':memory:');

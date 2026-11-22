@@ -1,7 +1,7 @@
 'use strict';
 
 const IST = 'Asia/Kolkata';
-const HOUR_MS = 60 * 60 * 1000;
+const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const STATUS_OPTIONS = ['Not Applied', 'Applied', 'Assessment', 'Interview', 'Rejected', 'Offer'];
 const state = { companies: [], applications: [], emails: [], checksToday: 0, lastSync: null, bridgeConfigured: false };
 let activePage = 'companies';
@@ -40,7 +40,7 @@ function istDateToday() {
 function isDue(company, now = Date.now()) {
   if (!company.last_checked_at) return true;
   const last = new Date(company.last_checked_at).getTime();
-  return !Number.isFinite(last) || now >= last + HOUR_MS;
+  return !Number.isFinite(last) || now >= last + CHECK_INTERVAL_MS;
 }
 function link(label, href) {
   if (!href) return el('span', 'quiet', 'Not added');
@@ -112,7 +112,7 @@ function statusButton(company) {
   button.type = 'button';
   button.dataset.companyStatus = company.id;
   applyCompanyStatus(button, company);
-  button.title = 'Click AFTER checking this company’s career and LinkedIn pages. Clicking again restarts the 60-minute timer.';
+  button.title = 'Click AFTER checking this company’s career and LinkedIn pages. Clicking again restarts the 24-hour timer.';
   button.addEventListener('click', async () => {
     button.disabled = true;
     try {
@@ -121,7 +121,7 @@ function statusButton(company) {
       state.checksToday += 1;
       renderCompanies();
       renderStats();
-      toast(`${company.name}: checked. Recheck in one hour.`);
+      toast(`${company.name}: checked. Recheck in 24 hours.`);
     } catch (error) {
       toast(error.message);
       button.disabled = false;
@@ -132,9 +132,9 @@ function statusButton(company) {
 function applyCompanyStatus(button, company) {
   const due = isDue(company);
   button.classList.toggle('waiting', !due);
-  button.replaceChildren(byText(due ? "Didn't check" : 'Need to check back in an hour'));
+  button.replaceChildren(byText(due ? "Didn't check" : 'Check back in 24 hours'));
   const helper = el('span', 'status-extra', company.last_checked_at
-    ? `Due: ${istTime(new Date(new Date(company.last_checked_at).getTime() + HOUR_MS).toISOString())} IST`
+    ? `Due: ${istTime(new Date(new Date(company.last_checked_at).getTime() + CHECK_INTERVAL_MS).toISOString())} IST`
     : 'Never checked');
   button.append(helper);
 }

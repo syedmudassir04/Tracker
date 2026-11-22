@@ -1,5 +1,6 @@
 // Cloudflare Worker: HTTP API, D1 persistence, daily scheduled Google sync.
 const HOUR_MS = 60 * 60 * 1000;
+const CHECK_INTERVAL_MS = 24 * HOUR_MS;
 const SESSION_MS = 12 * HOUR_MS;
 const ALLOWED_STATUSES = new Set(['Not Applied', 'Applied', 'Assessment', 'Interview', 'Rejected', 'Offer']);
 const JSON_HEADERS = {
@@ -24,7 +25,7 @@ export function checkStatus(lastCheckedAt, now = Date.now()) {
   if (!lastCheckedAt) return 'due';
   const stamp = Date.parse(lastCheckedAt);
   if (!Number.isFinite(stamp)) return 'due';
-  return now >= stamp + HOUR_MS ? 'due' : 'waiting';
+  return now >= stamp + CHECK_INTERVAL_MS ? 'due' : 'waiting';
 }
 
 export function safeHttpUrl(value) {
@@ -236,8 +237,8 @@ async function syncGoogle(env, triggerType = 'manual') {
     const now = Date.now();
     const companies = companyRows.results.map((company) => ({
       ...company,
-      check_status: checkStatus(company.last_checked_at, now) === 'due' ? "Didn't check" : 'Need to check back in an hour',
-      next_due_at: company.last_checked_at ? new Date(Date.parse(company.last_checked_at) + HOUR_MS).toISOString() : '',
+      check_status: checkStatus(company.last_checked_at, now) === 'due' ? "Didn't check" : 'Check back in 24 hours',
+      next_due_at: company.last_checked_at ? new Date(Date.parse(company.last_checked_at) + CHECK_INTERVAL_MS).toISOString() : '',
     }));
     const applications = applicationRows.results;
     countCompanies = companies.length;
