@@ -1,13 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import worker, { checkStatus, getIstDateKey, getIstDayStartUtc, safeHttpUrl } from '../src/worker.js';
+import worker, { checkStatus, getIstDateKey, getIstDayStartUtc, getNextIstMidnightUtc, safeHttpUrl } from '../src/worker.js';
 
-test('daily status uses independent timestamps and expires after 24 hours', () => {
-  const start = Date.parse('2026-11-20T08:00:00.000Z');
-  assert.equal(checkStatus(null, start), 'due');
-  assert.equal(checkStatus(new Date(start).toISOString(), start + (24 * 60 - 1) * 60 * 1000), 'waiting');
-  assert.equal(checkStatus(new Date(start).toISOString(), start + 24 * 60 * 60 * 1000), 'due');
-  assert.equal(checkStatus('invalid', start), 'due');
+test('daily status resets at midnight IST, not 24 hours after checking', () => {
+  const justBeforeMidnight = Date.parse('2026-11-23T18:20:00Z'); // 23:50 IST
+  const midnight = Date.parse('2026-11-23T18:30:00Z'); // 00:00 IST next day
+  assert.equal(checkStatus(null, justBeforeMidnight), 'due');
+  assert.equal(checkStatus(new Date(justBeforeMidnight).toISOString(), justBeforeMidnight + 9 * 60 * 1000), 'waiting');
+  assert.equal(checkStatus(new Date(justBeforeMidnight).toISOString(), midnight), 'due');
+  assert.equal(getNextIstMidnightUtc(new Date(justBeforeMidnight).toISOString()), '2026-11-23T18:30:00.000Z');
+  const justAfterMidnight = Date.parse('2026-11-23T18:31:00Z');
+  assert.equal(checkStatus(new Date(justAfterMidnight).toISOString(), midnight + 23 * 60 * 60 * 1000), 'waiting');
+  assert.equal(checkStatus(new Date(justAfterMidnight).toISOString(), Date.parse('2026-11-24T18:30:00Z')), 'due');
+  assert.equal(checkStatus('invalid', midnight), 'due');
 });
 
 test('India date rollover correctly determines the start of the local day', () => {

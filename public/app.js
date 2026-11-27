@@ -2,7 +2,7 @@
 import { LocalDocumentLibrary, validateDocument } from './local-files.js';
 
 const IST = 'Asia/Kolkata';
-const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const IST_DAY_MS = 24 * 60 * 60 * 1000;
 const STATUS_OPTIONS = ['Not Applied', 'Applied', 'Assessment', 'Interview', 'Rejected', 'Offer'];
 const state = {
   companies: [], applications: [], emails: [], files: [], dailyActivity: [], checksToday: 0,
@@ -13,6 +13,7 @@ const localDocuments = new LocalDocumentLibrary();
 let activeFileApplicationId = null;
 let activePage = 'companies';
 let toastTimer;
+let lastStateDay = '';
 
 const $ = (id) => document.getElementById(id);
 const byText = (value) => document.createTextNode(String(value ?? ''));
@@ -38,16 +39,21 @@ function istTime(iso, options = {}) {
     timeZone: IST, day: '2-digit', month: 'short', hour: 'numeric', minute: '2-digit', ...options,
   });
 }
-function istDateToday() {
+function istDateToday(value = new Date()) {
   const pieces = new Intl.DateTimeFormat('en-CA', { timeZone: IST, year: 'numeric', month: '2-digit', day: '2-digit' })
-    .formatToParts(new Date());
+    .formatToParts(value);
   const item = Object.fromEntries(pieces.map((part) => [part.type, part.value]));
   return `${item.year}-${item.month}-${item.day}`;
 }
 function isDue(company, now = Date.now()) {
   if (!company.last_checked_at) return true;
   const last = new Date(company.last_checked_at).getTime();
-  return !Number.isFinite(last) || now >= last + CHECK_INTERVAL_MS;
+  return !Number.isFinite(last) || last > now ||
+    istDateToday(new Date(last)) !== istDateToday(new Date(now));
+}
+function nextIstMidnight(lastCheckedAt) {
+  const day = istDateToday(new Date(lastCheckedAt));
+  return new Date(Date.parse(`${day}T00:00:00+05:30`) + IST_DAY_MS).toISOString();
 }
 function link(label, href) {
   if (!href) return el('span', 'quiet', 'Not added');
@@ -94,6 +100,7 @@ async function loadState() {
     undatedApplications: result.undatedApplications || 0,
     lastSync: result.lastSync, bridgeConfigured: result.bridgeConfigured,
   });
+  lastStateDay = istDateToday();
   renderAll();
 }
 function renderStats() {
@@ -124,7 +131,7 @@ function statusButton(company) {
   button.type = 'button';
   button.dataset.companyStatus = company.id;
   applyCompanyStatus(button, company);
-  button.title = 'Click AFTER checking this company’s career and LinkedIn pages. Clicking again restarts the 24-hour timer.';
+  button.title = 'Click AFTER reviewing this company. Its status resets at midnight IST each day.';
   button.addEventListener('click', async () => {
     button.disabled = true;
     try {
@@ -138,7 +145,7 @@ function statusButton(company) {
       renderDailyActivity();
       renderCompanies();
       renderStats();
-      toast(`${company.name}: checked. Recheck in 24 hours.`);
+      toast(`${company.name}: checked today. Due again at midnight IST.`);
     } catch (error) {
       toast(error.message);
       button.disabled = false;
@@ -149,9 +156,10 @@ function statusButton(company) {
 function applyCompanyStatus(button, company) {
   const due = isDue(company);
   button.classList.toggle('waiting', !due);
-  button.replaceChildren(byText(due ? "Didn't check" : 'Check back in 24 hours'));
+  button.replaceChildren(byText(due ? "Didn't check" : 'Checked today - check tomorrow'));
   const helper = el('span', 'status-extra', company.last_checked_at
-    ? `Due: ${istTime(new Date(new Date(company.last_checked_at).getTime() + CHECK_INTERVAL_MS).toISOString())} IST`
+    ? (due ? `Last checked: ${istTime(company.last_checked_at)} IST`
+      : `Resets: ${istTime(nextIstMidnight(company.last_checked_at))} IST`)
     : 'Never checked');
   button.append(helper);
 }
@@ -654,6 +662,12 @@ async function syncNow() {
 }
 function updateTimers() {
   if ($('app-view').hidden) return;
+  // Reload daily counters when the calendar day changes without a page refresh.
+  const today = istDateToday();
+  if (lastStateDay && lastStateDay !== today) {
+    lastStateDay = today;
+    loadState().catch((error) => toast(error.message));
+  }
   $('clock').textContent = `${new Date().toLocaleTimeString('en-IN', {
     timeZone: IST, hour: 'numeric', minute: '2-digit', second: '2-digit',
   })} IST`;

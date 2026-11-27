@@ -1,6 +1,6 @@
 // Cloudflare Worker: HTTP API, D1 persistence, daily scheduled Google sync.
 const HOUR_MS = 60 * 60 * 1000;
-const CHECK_INTERVAL_MS = 24 * HOUR_MS;
+const IST_DAY_MS = 24 * HOUR_MS;
 const SESSION_MS = 12 * HOUR_MS;
 const ALLOWED_STATUSES = new Set(['Not Applied', 'Applied', 'Assessment', 'Interview', 'Rejected', 'Offer']);
 const JSON_HEADERS = {
@@ -21,11 +21,19 @@ export function getIstDayStartUtc(date = new Date()) {
   return new Date(`${getIstDateKey(date)}T00:00:00+05:30`).toISOString();
 }
 
+// A check stays current until midnight in Hyderabad, even if that is only minutes away.
 export function checkStatus(lastCheckedAt, now = Date.now()) {
   if (!lastCheckedAt) return 'due';
   const stamp = Date.parse(lastCheckedAt);
-  if (!Number.isFinite(stamp)) return 'due';
-  return now >= stamp + CHECK_INTERVAL_MS ? 'due' : 'waiting';
+  if (!Number.isFinite(stamp) || stamp > now) return 'due';
+  return getIstDateKey(new Date(stamp)) === getIstDateKey(new Date(now)) ? 'waiting' : 'due';
+}
+
+export function getNextIstMidnightUtc(lastCheckedAt) {
+  const stamp = Date.parse(lastCheckedAt);
+  if (!Number.isFinite(stamp)) return '';
+  const start = Date.parse(getIstDayStartUtc(new Date(stamp)));
+  return new Date(start + IST_DAY_MS).toISOString();
 }
 
 export function safeHttpUrl(value) {
@@ -260,8 +268,8 @@ async function syncGoogle(env, triggerType = 'manual') {
     const now = Date.now();
     const companies = companyRows.results.map((company) => ({
       ...company,
-      check_status: checkStatus(company.last_checked_at, now) === 'due' ? "Didn't check" : 'Check back in 24 hours',
-      next_due_at: company.last_checked_at ? new Date(Date.parse(company.last_checked_at) + CHECK_INTERVAL_MS).toISOString() : '',
+      check_status: checkStatus(company.last_checked_at, now) === 'due' ? "Didn't check" : 'Checked today - check tomorrow',
+      next_due_at: company.last_checked_at ? getNextIstMidnightUtc(company.last_checked_at) : '',
     }));
     const applications = applicationRows.results;
     countCompanies = companies.length;
