@@ -47,3 +47,8 @@
 .application-attachments .attachment-label input{width:100%;background:#fff}
 .application-attachments .attachment-label .muted{font-weight:400}
 #form-dialog:has(.application-attachments){width:min(660px,calc(100vw - 24px))}
+
+/* The most recent three application days show by default; history expands on demand. */
+.daily-history-toggle{margin-top:12px}
+.daily-scroll.expanded{max-height:460px;overflow-y:auto}
+.daily-scroll:not(.expanded){max-height:none;overflow:visible}

@@ -22,8 +22,9 @@ function setup() {
   ensureSheet_(spreadsheet, 'Gmail Leads', [
     'Received (UTC)', 'Sender', 'Subject', 'Category', 'Open Gmail', 'Message ID'
   ]);
+  ensureSheet_(spreadsheet, 'Daily Activity', ['Day (IST)', 'Applications', 'Company Checks']);
   ensureSheet_(spreadsheet, 'Daily Summary', [
-    'Day (IST)', 'Synced At (UTC)', 'Companies', 'Checks Today', 'Due Now', 'Applications', 'Gmail Matches', 'Trigger', 'Applications Today', 'Checks All Time'
+    'Day (IST)', 'Synced At (UTC)', 'Companies', 'Checks Today', 'Due Now', 'Applications', 'Gmail Matches', 'Trigger', 'Applications Today', 'Checks All Time', 'Applications Overall'
   ]);
   // This intentionally prompts consent for Gmail access when setup() is run.
   GmailApp.search('newer_than:1d', 0, 1);
@@ -61,6 +62,7 @@ function sync_(request) {
   const companies = Array.isArray(request.companies) ? request.companies : [];
   const applications = Array.isArray(request.applications) ? request.applications : [];
   const stats = request.stats || {};
+  const activity = Array.isArray(request.daily_activity) ? request.daily_activity : [];
   const companyHeaders = [
     'Company Name', 'Careers Page', 'LinkedIn Jobs', 'Check Status', 'Notes', 'Website Type', 'Last Checked (UTC)', 'Next Due (UTC)'
   ];
@@ -81,17 +83,19 @@ function sync_(request) {
   companySheet.hideColumns(7, 2);
   setCompanyStatusColors_(companySheet);
   replaceRows_(spreadsheet, 'Applications', applicationHeaders, applicationRows);
+  replaceRows_(spreadsheet, 'Daily Activity', ['Day (IST)', 'Applications', 'Company Checks'],
+    activity.map(function (row) { return [asCell_(row.day), row.applications == null ? '' : Number(row.applications), Number(row.checks || 0)]; }));
 
-  const gmailMessages = scanGmail_();
+  const gmailMessages = scanGmail_(applications);
   appendNewGmail_(spreadsheet, gmailMessages);
   const summary = ensureSheet_(spreadsheet, 'Daily Summary', [
-    'Day (IST)', 'Synced At (UTC)', 'Companies', 'Checks Today', 'Due Now', 'Applications', 'Gmail Matches', 'Trigger', 'Applications Today', 'Checks All Time'
+    'Day (IST)', 'Synced At (UTC)', 'Companies', 'Checks Today', 'Due Now', 'Applications', 'Gmail Matches', 'Trigger', 'Applications Today', 'Checks All Time', 'Applications Overall'
   ]);
   summary.appendRow([
     asCell_(request.date_key), new Date().toISOString(), companies.length,
     Number(stats.checks_today || 0), Number(stats.due_now || 0), applications.length,
     gmailMessages.length, asCell_(request.trigger || 'manual'),
-    Number(stats.applications_today || 0), Number(stats.checks_all_time || 0)
+    Number(stats.applications_today || 0), Number(stats.checks_all_time || 0), Number(stats.applications_all_time || 0)
   ]);
   SpreadsheetApp.flush();
   return { ok: true, gmail_messages: gmailMessages };
@@ -144,34 +148,51 @@ function setCompanyStatusColors_(sheet) {
   sheet.setConditionalFormatRules([red, green]);
 }
 
-function scanGmail_() {
-  // Gmail is READ ONLY here: this script never sends, deletes, labels, or archives mail.
-  // GmailApp itself requests broad authorization; see README security notes.
-  const query = 'newer_than:2d {"thank you for applying" "application received" "application submitted" "job alert" "jobs matching" "job recommendations" "assessment" "interview invitation"}';
-  const threads = GmailApp.search(query, 0, 80);
+function scanGmail_(applications) {
+  // READ ONLY: only matching email subjects/senders and Gmail links are exported.
+  // The mailbox itself remains in Gmail; no message bodies are copied.
+  const queries = [
+    'in:inbox newer_than:2d -in:spam -in:trash',
+    'newer_than:2d {"thank you for applying" "application received" "application submitted" "job alert" "job recommendations" "assessment" "interview invitation"}'
+  ];
+  const threads = [];
+  const seenThreads = {};
+  queries.forEach(function (query, index) {
+    GmailApp.search(query, 0, index === 0 ? 100 : 80).forEach(function (thread) {
+      if (!seenThreads[thread.getId()]) { seenThreads[thread.getId()] = true; threads.push(thread); }
+    });
+  });
+  const companyNames = (applications || []).map(function (row) { return String(row.company_name || '').toLowerCase().trim(); })
+    .filter(function (name) { return name.length >= 4; });
+  const roles = (applications || []).map(function (row) { return String(row.job_title || '').toLowerCase().trim(); })
+    .filter(function (name) { return name.length >= 8; });
   const cutoff = Date.now() - 48 * 60 * 60 * 1000;
   const results = [];
-  const seen = {};
+  const seenMessages = {};
   threads.forEach(function (thread) {
     thread.getMessages().forEach(function (message) {
       if (message.getDate().getTime() < cutoff) return;
       const id = message.getId();
-      if (seen[id]) return;
-      seen[id] = true;
+      if (seenMessages[id]) return;
+      seenMessages[id] = true;
       const subject = message.getSubject() || '(no subject)';
       const sender = message.getFrom() || '';
-      const searchable = subject + ' ' + sender;
-      let category = 'Review';
-      if (/interview/i.test(searchable)) category = 'Interview';
+      const searchable = (subject + ' ' + sender).toLowerCase();
+      const matchedCompany = companyNames.some(function (name) { return searchable.includes(name); });
+      const matchedRole = roles.some(function (name) { return searchable.includes(name); });
+      const replyHint = /\bre:|\bfwd:|following up|next steps|regarding your|application update|status update|recruiter|hiring team|your candidacy|your profile|shortlisted/i.test(searchable);
+      const jobHint = /interview|assessment|online test|coding challenge|application|applying|candidate|hiring|recruitment|job|career|position|vacancy|opportunity|role/i.test(searchable);
+      let category = '';
+      if (replyHint && (matchedCompany || matchedRole || jobHint)) category = 'Job reply';
+      else if (/interview/i.test(searchable)) category = 'Interview';
       else if (/assessment|online test|coding challenge/i.test(searchable)) category = 'Assessment';
       else if (/application received|application submitted|thank you for applying|successfully applied/i.test(searchable)) category = 'Application confirmation';
       else if (/job alert|jobs matching|job recommendations|new jobs|open roles|job opening/i.test(searchable)) category = 'Job alert';
+      else if ((matchedCompany || matchedRole) && jobHint) category = 'Review';
+      if (!category) return; // Do not export unrelated personal email metadata.
       results.push({
-        id: id,
-        sender: sender.slice(0, 300),
-        subject: subject.slice(0, 500),
-        received_at: message.getDate().toISOString(),
-        category: category,
+        id: id, sender: sender.slice(0, 300), subject: subject.slice(0, 500),
+        received_at: message.getDate().toISOString(), category: category,
         gmail_url: 'https://mail.google.com/mail/u/0/#all/' + thread.getId()
       });
     });

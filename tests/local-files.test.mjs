@@ -73,7 +73,7 @@ test('saving, scanning, replacing, removing, and reloading are local-only', asyn
   assert.equal((await (await first.getFile(records.find(x=>x.kind==='resume'))).text()).startsWith('%PDF-'),true);
   await first.save(app, 'resume', pdf('Resume revised.pdf', '%PDF-1.7\nRevised!'));
   records=await first.scan();
-  assert.equal(records.find(r=>r.kind==='resume').filename, 'Resume revised.pdf');
+  assert.equal(records.find(r=>r.kind==='resume').original_filename, 'Resume revised.pdf');
   // Load from disk without browser-local IndexedDB state.
   const second=testLibrary(root);
   assert.equal((await second.scan()).length, 2);

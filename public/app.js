@@ -6,7 +6,7 @@ const IST_DAY_MS = 24 * 60 * 60 * 1000;
 const STATUS_OPTIONS = ['Not Applied', 'Applied', 'Assessment', 'Interview', 'Rejected', 'Offer'];
 const state = {
   companies: [], applications: [], emails: [], files: [], dailyActivity: [], checksToday: 0,
-  checksAllTime: 0, applicationsToday: 0, undatedApplications: 0,
+  checksAllTime: 0, applicationsToday: 0, applicationsAllTime: 0, undatedApplications: 0,
   lastSync: null, bridgeConfigured: false,
 };
 const localDocuments = new LocalDocumentLibrary();
@@ -14,6 +14,7 @@ let activeFileApplicationId = null;
 let activePage = 'companies';
 let toastTimer;
 let lastStateDay = '';
+let showFullDailyHistory = false;
 
 const $ = (id) => document.getElementById(id);
 const byText = (value) => document.createTextNode(String(value ?? ''));
@@ -97,6 +98,7 @@ async function loadState() {
     emails: result.emails || [], dailyActivity: result.dailyActivity || [],
     checksToday: result.checksToday || 0, checksAllTime: result.checksAllTime || 0,
     applicationsToday: result.applicationsToday || 0,
+    applicationsAllTime: result.applicationsAllTime || 0,
     undatedApplications: result.undatedApplications || 0,
     lastSync: result.lastSync, bridgeConfigured: result.bridgeConfigured,
   });
@@ -109,7 +111,7 @@ function renderStats() {
   $('stat-checks').textContent = state.checksToday;
   $('stat-total-checks').textContent = state.checksAllTime;
   $('stat-apps-today').textContent = state.applicationsToday;
-  $('stat-apps').textContent = state.applications.length;
+  $('stat-apps').textContent = state.applicationsAllTime;
 }
 function renderSyncStatus() {
   const target = $('sync-status');
@@ -118,12 +120,12 @@ function renderSyncStatus() {
     target.classList.add('problem');
     target.textContent = 'Google connection not configured yet. Company tracking still works. Complete the README setup to enable Gmail and Sheets sync.';
   } else if (!state.lastSync) {
-    target.textContent = 'Google is configured. No sync yet. Automatic sync is scheduled for 7:00 PM IST daily, or click Sync Google now.';
+    target.textContent = 'Google is configured. No sync yet. Morning Gmail review runs at 8:00 AM IST and the evening sync at 7:00 PM IST. You can also click Sync Google now.';
   } else if (state.lastSync.status === 'failed') {
     target.classList.add('problem');
     target.textContent = `Last Google sync failed: ${state.lastSync.error}. Try Sync Google now after checking the configuration.`;
   } else {
-    target.textContent = `Last successful Google sync: ${istTime(state.lastSync.completed_at)} IST · ${state.lastSync.companies} companies · ${state.lastSync.applications} applications · ${state.lastSync.gmail_messages} Gmail matches. Next scheduled: 7:00 PM IST.`;
+    target.textContent = `Last successful Google sync: ${istTime(state.lastSync.completed_at)} IST · ${state.lastSync.companies} companies · ${state.lastSync.applications} applications · ${state.lastSync.gmail_messages} Gmail matches. Morning Gmail review: 8:00 AM IST; evening sync: 7:00 PM IST.`;
   }
 }
 function statusButton(company) {
@@ -232,7 +234,10 @@ function renderApplications() {
 function renderEmails() {
   const body = $('emails-body');
   body.replaceChildren();
-  for (const email of state.emails) {
+  const priority = { 'Job reply': 0, Interview: 1, Assessment: 2, Review: 3, 'Application confirmation': 4, 'Job alert': 5 };
+  for (const email of [...state.emails].sort((a, b) =>
+    (priority[a.category] ?? 9) - (priority[b.category] ?? 9) ||
+    String(b.received_at).localeCompare(String(a.received_at)))) {
     const row = el('tr');
     const subject = el('td'); subject.append(el('span', 'primary-cell', email.subject));
     const sender = el('td'); sender.append(el('span', 'subline', email.sender));
@@ -247,17 +252,22 @@ function renderEmails() {
 function renderDailyActivity() {
   const tbody = $('daily-body');
   tbody.replaceChildren();
-  for (const rowData of state.dailyActivity) {
+  for (const rowData of (showFullDailyHistory ? state.dailyActivity : state.dailyActivity.slice(0, 3))) {
     const row = el('tr');
     const day = el('td', 'daily-date', new Date(`${rowData.day}T12:00:00+05:30`).toLocaleDateString('en-IN', {
       timeZone: IST, day: '2-digit', month: 'short', year: 'numeric', weekday: 'short',
     }));
-    const applications = el('td', 'daily-num', rowData.applications);
+    const applications = el('td', 'daily-num', rowData.applications == null ? '—' : rowData.applications);
     const checks = el('td', 'daily-num', rowData.checks);
     if (rowData.day === istDateToday()) row.classList.add('today-row');
     addChildren(row, day, applications, checks);
     tbody.append(row);
   }
+  const toggle = $('daily-history-toggle');
+  toggle.hidden = state.dailyActivity.length <= 3;
+  toggle.textContent = showFullDailyHistory ? 'Show latest 3 days' : `Show full history (${state.dailyActivity.length} days)`;
+  toggle.setAttribute('aria-expanded', String(showFullDailyHistory));
+  $('daily-scroll').classList.toggle('expanded', showFullDailyHistory);
   $('undated-warning').hidden = state.undatedApplications === 0;
   $('undated-warning').textContent = `${state.undatedApplications} application(s) have a status beyond Not Applied but no Date applied. Add their original date to count them in the daily totals.`;
 }
@@ -702,6 +712,7 @@ async function initialize() {
   $('site-filter').addEventListener('change', renderCompanies);
   $('application-search').addEventListener('input', renderApplications);
   $('application-filter').addEventListener('change', renderApplications);
+  $('daily-history-toggle').addEventListener('click', () => { showFullDailyHistory = !showFullDailyHistory; renderDailyActivity(); });
   $('documents-search').addEventListener('input', renderDocuments);
   $('choose-folder-btn').addEventListener('click', chooseLocalFolder);
   $('reconnect-folder-btn').addEventListener('click', reconnectLocalFolder);

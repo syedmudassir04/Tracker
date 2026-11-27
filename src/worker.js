@@ -212,22 +212,29 @@ function parseApplication(data) {
   };
 }
 
-function dailyActivity(checkRows, applicationRows, todayKey = getIstDateKey()) {
+function dailyActivity(checkRows, applicationRows, historicalRows, todayKey = getIstDateKey()) {
   const byDay = new Map();
   const [year, month, day] = todayKey.split('-').map(Number);
-  for (let offset = 29; offset >= 0; offset--) {
-    const key = new Date(Date.UTC(year, month - 1, day - offset)).toISOString().slice(0, 10);
+  const end = Date.UTC(year, month - 1, day);
+  const start = Date.parse('2026-10-05T00:00:00Z');
+  for (let tick = start; tick <= end; tick += IST_DAY_MS) {
+    const key = new Date(tick).toISOString().slice(0, 10);
     byDay.set(key, { day: key, checks: 0, applications: 0 });
   }
   for (const row of checkRows) if (byDay.has(row.day)) byDay.get(row.day).checks = Number(row.total);
   for (const row of applicationRows) if (byDay.has(row.day)) byDay.get(row.day).applications = Number(row.total);
+  for (const row of historicalRows) {
+    if (byDay.has(row.day) && row.reported_total == null && !Number(byDay.get(row.day).applications)) {
+      byDay.get(row.day).applications = null; // Blank was not a reported zero.
+    }
+  }
   return [...byDay.values()].reverse();
 }
 
 async function getState(env) {
   const todayKey = getIstDateKey();
-  const windowStart = new Date(Date.parse(`${todayKey}T00:00:00+05:30`) - 29 * 86400000).toISOString();
-  const [companies, applications, emails, sync, checked, allChecks, dailyChecks, dailyApplications] = await Promise.all([
+  const windowStart = '2026-10-04T18:30:00.000Z'; // October 5, 2026 at midnight IST
+  const [companies, applications, emails, sync, checked, allChecks, dailyChecks, dailyApplications, historyRows, historySum] = await Promise.all([
     env.DB.prepare('SELECT * FROM companies ORDER BY name COLLATE NOCASE ASC').all(),
     env.DB.prepare('SELECT * FROM applications ORDER BY created_at DESC').all(),
     env.DB.prepare('SELECT * FROM email_leads ORDER BY received_at DESC LIMIT 100').all(),
@@ -235,16 +242,26 @@ async function getState(env) {
     env.DB.prepare('SELECT (SELECT COUNT(*) FROM check_log WHERE checked_at >= ?) + (SELECT COUNT(*) FROM archived_check_log WHERE checked_at >= ?) AS count').bind(getIstDayStartUtc(), getIstDayStartUtc()).first(),
     env.DB.prepare('SELECT (SELECT COUNT(*) FROM check_log) + (SELECT COUNT(*) FROM archived_check_log) AS count').first(),
     env.DB.prepare("SELECT date(checked_at, '+330 minutes') AS day, COUNT(*) AS total FROM (SELECT checked_at FROM check_log UNION ALL SELECT checked_at FROM archived_check_log) WHERE checked_at >= ? GROUP BY day").bind(windowStart).all(),
-    env.DB.prepare("SELECT date_applied AS day, COUNT(*) AS total FROM applications WHERE date_applied >= ? AND date_applied != '' GROUP BY date_applied").bind(windowStart.slice(0, 10)).all(),
+    env.DB.prepare(`SELECT day, SUM(total) AS total FROM (
+      SELECT date_applied AS day, COUNT(*) AS total FROM applications
+        WHERE date_applied >= '2026-10-05' AND date_applied != '' GROUP BY date_applied
+      UNION ALL
+      SELECT day, baseline AS total FROM historical_application_totals WHERE day >= '2026-10-05'
+    ) GROUP BY day`).all(),
+    env.DB.prepare("SELECT day, reported_total FROM historical_application_totals WHERE day >= '2026-10-05'").all(),
+    env.DB.prepare('SELECT COALESCE(SUM(baseline), 0) AS total FROM historical_application_totals').first(),
   ]);
-  const appliedToday = applications.results.filter((a) => a.date_applied === todayKey).length;
+  const activity = dailyActivity(dailyChecks.results, dailyApplications.results, historyRows.results, todayKey);
+  const appliedToday = Number(activity.find((row) => row.day === todayKey)?.applications ?? 0);
+  const applicationsAllTime = Number(historySum?.total ?? 0) + applications.results.filter((a) => Boolean(a.date_applied)).length;
   const undatedApplications = applications.results.filter((a) => !a.date_applied && a.status !== 'Not Applied').length;
   return {
     ok: true, companies: companies.results, applications: applications.results,
     emails: emails.results,
     lastSync: sync || null, checksToday: Number(checked?.count ?? 0),
     checksAllTime: Number(allChecks?.count ?? 0), applicationsToday: appliedToday,
-    undatedApplications, dailyActivity: dailyActivity(dailyChecks.results, dailyApplications.results, todayKey),
+    applicationsAllTime,
+    undatedApplications, dailyActivity: activity,
     bridgeConfigured: Boolean(env.APPS_SCRIPT_URL && env.BRIDGE_SHARED_SECRET),
     serverNow: new Date().toISOString(),
   };
@@ -265,6 +282,29 @@ async function syncGoogle(env, triggerType = 'manual') {
       env.DB.prepare('SELECT (SELECT COUNT(*) FROM check_log WHERE checked_at >= ?) + (SELECT COUNT(*) FROM archived_check_log WHERE checked_at >= ?) AS count').bind(getIstDayStartUtc(), getIstDayStartUtc()).first(),
       env.DB.prepare('SELECT (SELECT COUNT(*) FROM check_log) + (SELECT COUNT(*) FROM archived_check_log) AS count').first(),
     ]);
+    const reportRows = await env.DB.prepare(`SELECT day, SUM(total) AS applications FROM (
+      SELECT date_applied AS day, COUNT(*) AS total FROM applications
+        WHERE date_applied >= '2026-10-05' AND date_applied != '' GROUP BY date_applied
+      UNION ALL
+      SELECT day, baseline AS total FROM historical_application_totals WHERE day >= '2026-10-05'
+    ) GROUP BY day ORDER BY day DESC`).all();
+    const checksByDay = await env.DB.prepare(`SELECT date(checked_at, '+330 minutes') AS day,
+      COUNT(*) AS checks FROM (SELECT checked_at FROM check_log UNION ALL SELECT checked_at FROM archived_check_log)
+      WHERE checked_at >= '2026-10-04T18:30:00.000Z' GROUP BY day`).all();
+    const days = new Map(reportRows.results.map((x) => [x.day, { day: x.day, applications: Number(x.applications), checks: 0 }]));
+    for (const item of checksByDay.results) {
+      const record = days.get(item.day) || { day: item.day, applications: 0, checks: 0 };
+      record.checks = Number(item.checks);
+      days.set(item.day, record);
+    }
+    const history = await env.DB.prepare('SELECT day, reported_total FROM historical_application_totals').all();
+    for (const item of history.results) {
+      const record = days.get(item.day) || { day: item.day, applications: 0, checks: 0 };
+      if (item.reported_total == null && record.applications === 0) record.applications = null;
+      days.set(item.day, record);
+    }
+    const daily_activity = [...days.values()].sort((a, b) => b.day.localeCompare(a.day));
+    const applications_all_time = daily_activity.reduce((n, row) => n + (Number(row.applications) || 0), 0);
     const now = Date.now();
     const companies = companyRows.results.map((company) => ({
       ...company,
@@ -284,9 +324,10 @@ async function syncGoogle(env, triggerType = 'manual') {
       body: JSON.stringify({
         secret: env.BRIDGE_SHARED_SECRET,
         action: 'sync', trigger: triggerType, date_key: getIstDateKey(),
-        companies, applications,
+        companies, applications, daily_activity,
         stats: { checks_today: Number(checksToday?.count ?? 0), checks_all_time: Number(checksAllTime?.count ?? 0),
-          applications_today: applications.filter((a) => a.date_applied === getIstDateKey()).length, due_now: dueCount },
+          applications_today: daily_activity.find((d) => d.day === getIstDateKey())?.applications || 0,
+          applications_all_time, due_now: dueCount },
       }),
       redirect: 'follow',
       signal: AbortSignal.timeout(25000),
@@ -450,9 +491,10 @@ export default {
     if (req.method !== 'GET' && req.method !== 'HEAD') return fail('Method not allowed.', 405);
     return env.ASSETS.fetch(req);
   },
-  async scheduled(_event, env, ctx) {
-    ctx.waitUntil(syncGoogle(env, 'scheduled').catch((error) => {
-      console.error('Daily Google sync failed:', error.message);
+  async scheduled(controller, env, ctx) {
+    const triggerType = controller.cron === '30 2 * * *' ? 'morning-gmail' : 'evening-sync';
+    ctx.waitUntil(syncGoogle(env, triggerType).catch((error) => {
+      console.error(`Google ${triggerType} failed:`, error.message);
     }));
   },
 };

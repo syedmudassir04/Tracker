@@ -33,10 +33,10 @@
         <button class="nav-item active" data-page="companies"><span>▦</span> Company tracker</button>
         <button class="nav-item" data-page="applications"><span>◫</span> Applications</button>
         <button class="nav-item" data-page="documents"><span>▤</span> Documents</button>
-        <button class="nav-item" data-page="emails"><span>✉</span> Gmail leads</button>
+        <button class="nav-item" data-page="emails"><span>✉</span> Gmail replies</button>
       </nav>
       <div class="sidebar-bottom">
-        <span class="small">Daily Google sync: 7:00 PM IST</span>
+        <span class="small">Gmail: 8:00 AM · Sheets: 7:00 PM IST</span>
         <button id="logout-btn" class="text-button">Sign out</button>
       </div>
     </aside>
@@ -68,7 +68,7 @@
           <div class="stat"><div class="stat-label">Checks today</div><div id="stat-checks" class="stat-value">0</div></div>
           <div class="stat"><div class="stat-label">Overall checks</div><div id="stat-total-checks" class="stat-value">0</div></div>
           <div class="stat"><div class="stat-label">Applications today</div><div id="stat-apps-today" class="stat-value">0</div></div>
-          <div class="stat"><div class="stat-label">Applications logged</div><div id="stat-apps" class="stat-value">0</div></div>
+          <div class="stat"><div class="stat-label">Applications total</div><div id="stat-apps" class="stat-value">0</div></div>
         </section>
         <div id="sync-status" class="sync-status">Google connection status is loading.</div>
 
@@ -105,12 +105,13 @@
             <button id="add-application-btn" class="btn btn-primary">+ Add application</button>
           </div>
           <div class="daily-section">
-            <div class="daily-title"><h3>Applications and checks by day</h3><span>Last 30 days · Hyderabad time</span></div>
-            <p class="muted">Applications use the <strong>Date applied</strong> you saved. Changing a job's status won't count it a second time.</p>
-            <div class="daily-scroll"><table class="data-table daily-table" aria-label="Daily application and check totals">
+            <div class="daily-title"><h3>Applications and checks by day</h3><span>Since 5 Oct 2026 · Hyderabad time</span></div>
+            <p class="muted">Historical totals include your reported October–November applications; individual records already saved are not counted twice. Blank dates remain unspecified.</p>
+            <div id="daily-scroll" class="daily-scroll"><table class="data-table daily-table" aria-label="Daily application and check totals">
               <thead><tr><th>Date (IST)</th><th>Applications</th><th>Company checks</th></tr></thead>
               <tbody id="daily-body"></tbody>
             </table></div>
+            <button id="daily-history-toggle" class="btn btn-outline daily-history-toggle" type="button" aria-expanded="false">Show all history</button>
             <p id="undated-warning" class="small muted" hidden></p>
           </div>
           <div class="toolbar">
@@ -151,7 +152,7 @@
         </section>
 
         <section id="emails-page" class="page" hidden>
-          <div class="section-head"><div><h2>Gmail leads</h2><p class="muted">Relevant emails found by the last Google sync. Review before taking action.</p></div></div>
+          <div class="section-head"><div><h2>Gmail replies and job alerts</h2><p class="muted">Prioritized replies, interviews and assessments from the morning Gmail check. Subject/sender matching is approximate.</p></div></div>
           <div class="information">Gmail is scanned for job alerts, application confirmations, assessments and interviews. Email matches do not automatically change your application statuses.</div>
           <div class="table-scroll">
             <table class="data-table" aria-label="Gmail job leads">

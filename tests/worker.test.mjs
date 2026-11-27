@@ -63,6 +63,7 @@ test('company creation, daily check, application logging, edits, and deletion wo
   sqlite.exec(readFileSync(new URL('../migrations/0001_init.sql', import.meta.url), 'utf8'));
   sqlite.exec(readFileSync(new URL('../migrations/0002_site_type.sql', import.meta.url), 'utf8'));
   sqlite.exec(readFileSync(new URL('../migrations/0003_application_documents.sql', import.meta.url), 'utf8'));
+  sqlite.exec(readFileSync(new URL('../migrations/0004_historical_application_totals.sql', import.meta.url), 'utf8'));
   const env = {
     ADMIN_PASSWORD: 'another-strong-private-test-password',
     SESSION_SECRET: 'another-local-test-secret-with-more-than-32-characters',
@@ -157,6 +158,7 @@ test('manual Google sync sends website snapshot and imports Gmail leads without 
   sqlite.exec(readFileSync(new URL('../migrations/0001_init.sql', import.meta.url), 'utf8'));
   sqlite.exec(readFileSync(new URL('../migrations/0002_site_type.sql', import.meta.url), 'utf8'));
   sqlite.exec(readFileSync(new URL('../migrations/0003_application_documents.sql', import.meta.url), 'utf8'));
+  sqlite.exec(readFileSync(new URL('../migrations/0004_historical_application_totals.sql', import.meta.url), 'utf8'));
   const statements = (sql) => {
     const statement = sqlite.prepare(sql);
     let args = [];

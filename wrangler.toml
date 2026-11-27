@@ -14,5 +14,5 @@ binding = "ASSETS"
 run_worker_first = true
 
 [triggers]
-# 13:30 UTC = 19:00 India Standard Time
-crons = ["30 13 * * *"]
+# 02:30 UTC = 08:00 IST Gmail reply check, 13:30 UTC = 19:00 IST sync.
+crons = ["30 2 * * *", "30 13 * * *"]

@@ -27,9 +27,23 @@ export function folderNameForApplication(application) {
 }
 
 function validApplicationId(id) { return /^[a-f\d-]{36}$/i.test(String(id || '')); }
+export function resumeFileName(application, extension) {
+  const raw = String(application.date_applied || application.created_at || '');
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const year = match ? Number(match[1]) : new Date().getFullYear();
+  const month = match ? Number(match[2]) : new Date().getMonth() + 1;
+  const day = match ? Number(match[3]) : new Date().getDate();
+  const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const suffix = day >= 11 && day <= 13 ? 'th' : ({1:'st', 2:'nd', 3:'rd'}[day % 10] || 'th');
+  return `Syed_Mudassir_${day}${suffix}${months[month-1]}${year}.${extension}`;
+}
 function safeStoredName(name, kind) {
-  return typeof name === 'string' && /^(Resume|Cover Letter)\.(pdf|docx|doc)$/i.test(name)
-    && name.startsWith(FILE_KINDS[kind] + '.') && !name.includes('/') && !name.includes('\\');
+  if (typeof name !== 'string' || name.includes('/') || name.includes('\\')) return false;
+  if (kind === 'resume') {
+    return /^Resume\.(pdf|docx|doc)$/i.test(name) ||
+      /^Syed_Mudassir_(?:[1-9]|[12]\d|3[01])(?:st|nd|rd|th)(?:January|February|March|April|May|June|July|August|September|October|November|December)\d{4}\.(pdf|docx|doc)$/i.test(name);
+  }
+  return /^Cover Letter\.(pdf|docx|doc)$/i.test(name);
 }
 
 export async function validateDocument(file) {
@@ -168,7 +182,7 @@ export class LocalDocumentLibrary {
           files.push({
             id: `${manifest.application_id}:${kind}`, application_id: manifest.application_id,
             company_name: String(manifest.company_name || ''), job_title: String(manifest.job_title || ''),
-            kind, filename: String(entry.original_name || entry.stored_name),
+            kind, filename: entry.stored_name, original_filename: String(entry.original_name || entry.stored_name),
             stored_name: entry.stored_name, media_type: MEDIA[entry.stored_name.split('.').pop().toLowerCase()],
             file_size: file.size, uploaded_at: entry.uploaded_at || '', folder_name: name,
           });
@@ -220,7 +234,7 @@ export class LocalDocumentLibrary {
     if (!FILE_KINDS[kind]) throw new Error('Unsupported document type.');
     const { extension } = await validateDocument(file);
     const folder = await this.applicationFolder(app);
-    const storedName = `${FILE_KINDS[kind]}.${extension}`;
+    const storedName = kind === 'resume' ? resumeFileName(app, extension) : `${FILE_KINDS[kind]}.${extension}`;
     const previous = folder.manifest.files[kind]?.stored_name;
     const handle = await folder.handle.getFileHandle(storedName, { create: true });
     const writer = await handle.createWritable();
